@@ -1,0 +1,53 @@
+\documentclass{article}
+\usepackage[utf8]{inputenc}
+\usepackage{booktabs} % For professional tables
+\usepackage{geometry}
+\geometry{a4paper, margin=1in}
+
+\title{Milestones: Shallow Water Equation Simulation}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section*{Overview}
+{\large It will simulate the water surface based on the numerically solving shallow water equations, dynamic fluctuations, interaction, and rendering effects on large-scale water surfaces are achieved while maintaining physical realism.\par}
+
+\renewcommand{\arraystretch}{1.8}
+\begin{table}[h]
+\centering
+\begin{tabular}{p{0.2\textwidth} p{0.75\textwidth}}
+\toprule
+\textbf{Milestone} & \textbf{} \\ \midrule
+
+\textbf{M1} & \textbullet\ Setup GLFW, GLAD, GLM, implement an empty window. 
+\newline \textbullet\ Implement Stable $N \times N$ grid. Write a basic shader to render a blue plane using a constant height. 
+\newline \textbullet\ Implement basic SWE update cycle on the stable grid.
+\\ 
+\addlinespace[0.8em]
+
+\textbf{M2} & \textbullet\ Implement staggered Grid (MAC Grid).
+\newline \textbullet\ Adding Advection produces more realistic fluid dynamics effects.
+\newline \textbullet\ Implement CFL conditions to automatically calculate $\Delta t$
+\newline \textbullet\ Supports the generation and diffusion of fluctuations.
+\\
+\addlinespace[0.8em]
+
+\textbf{M3} & \textbullet\ In the shader, the real-time normal is calculated using the height difference to achieve Blinn-Phong specular highlights.
+\newline \textbullet\ The shader modifies the y-coordinates of the vertices in real time based on the h-value.
+\newline \textbullet\ Achieve reflection and absorption boundaries.
+\newline \textbullet\ Implement environment mapping and Fresnel effect
+\\
+\addlinespace[0.8em]
+
+\textbf{M4} & \textbullet\ By placing a solid within it, the object can be coupled with the fluid.
+\newline \textbullet\ Add a simple particle system or foam map
+\\
+\addlinespace[0.8em]
+
+\textbf{M5} & \textbullet\ Performance optimization.
+\end{tabular}
+\end{table}
+
+\end{document}

@@ -2,6 +2,7 @@
 #define GLFW_INCLUDE_NONE
 
 #include <iostream>
+#include <vector>
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 
@@ -18,7 +19,7 @@ const GLchar* vertexShaderSource = "#version 330 core\n"
     "layout (location = 0) in vec3 position;\n"
     "void main()\n"
     "{\n"
-    "gl_Position = vec4(position.x, position.y, position.z, 1.0);\n"
+    "gl_Position = vec4(position.x, position.y - position.z * 0.5, position.z, 1.0);\n"
     "}\0";
 
 const GLchar* fragmentShaderSource = "#version 330 core\n"
@@ -89,17 +90,40 @@ int main() {
     glDeleteShader(vertexShader);
     glDeleteShader(fragmentShader);
 
-    GLfloat vertices[] = {
-        0.5f, 0.5f, 0.0f,
-        0.5f, -0.5f, 0.0f,
-        -0.5f, -0.5f, 0.0f,
-        -0.5f, 0.5f, 0.0f
-    };
+    const int  gridSize = 128;
+    std::vector<float> vertices;
+    std::vector<unsigned int> indices;
+    vertices.reserve((gridSize + 1) * (gridSize + 1) * 3);
+    indices.reserve(gridSize * gridSize * 6);
 
-    GLuint indices[] = {
-        0, 1, 3,
-        1, 2, 3
-    };
+    for (int i = 0; i <= gridSize; i++) {
+        for (int j = 0; j <= gridSize; j++) {
+            float x = static_cast<float>(j) / static_cast<float>(gridSize) * 2.0f - 1.0f;
+            float z = static_cast<float>(i) / static_cast<float>(gridSize) * 2.0f - 1.0f;
+            float y = 0.0f; 
+            
+            vertices.push_back(x);
+            vertices.push_back(y);
+            vertices.push_back(z);
+        }
+    }
+
+    for (int i = 0; i < gridSize; ++i) {
+        for (int j = 0; j < gridSize; ++j) {
+            unsigned int topLeft = i * (gridSize + 1) + j;
+            unsigned int topRight = topLeft + 1;
+            unsigned int bottomLeft = (i + 1) * (gridSize + 1) + j;
+            unsigned int bottomRight = bottomLeft + 1;
+
+            indices.push_back(topLeft);
+            indices.push_back(bottomLeft);
+            indices.push_back(topRight);
+
+            indices.push_back(topRight);
+            indices.push_back(bottomLeft);
+            indices.push_back(bottomRight);
+        }
+    }
 
 
 
@@ -110,14 +134,16 @@ int main() {
 
     glBindVertexArray(VAO);
     glBindBuffer(GL_ARRAY_BUFFER, VBO);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_STATIC_DRAW);
 
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), indices.data(), GL_STATIC_DRAW);
 
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
 
+    glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+    
     while (!glfwWindowShouldClose(window)) {
         if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
             glfwSetWindowShouldClose(window, true);
@@ -128,7 +154,7 @@ int main() {
 
         glUseProgram(shaderProgram);
         glBindVertexArray(VAO);
-        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+        glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(indices.size()), GL_UNSIGNED_INT, 0);
         glBindVertexArray(0);
         
         glfwSwapBuffers(window);

@@ -3,6 +3,7 @@
 
 #include <iostream>
 #include <vector>
+#include <cmath>
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 
@@ -134,7 +135,7 @@ int main() {
 
     glBindVertexArray(VAO);
     glBindBuffer(GL_ARRAY_BUFFER, VBO);
-    glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_STATIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_DYNAMIC_DRAW);
 
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), indices.data(), GL_STATIC_DRAW);
@@ -148,6 +149,20 @@ int main() {
         if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
             glfwSetWindowShouldClose(window, true);
         }
+
+        float time = static_cast<float>(glfwGetTime());
+        for (int i = 0; i <= gridSize; ++i) {
+            for (int j = 0; j <= gridSize; ++j) {
+                int index = (i * (gridSize + 1) + j) * 3;
+                float x = vertices[index];
+                float z = vertices[index + 2];
+                float dist = std::sqrt(x * x + z * z);
+                vertices[index + 1] = 0.1f * std::sin(10.0f * dist - 5.0f * time);
+            }
+        }
+
+        glBindBuffer(GL_ARRAY_BUFFER, VBO);
+        glBufferSubData(GL_ARRAY_BUFFER, 0, vertices.size() * sizeof(float), vertices.data());
 
         glClearColor(0.1f, 0.1f, 0.15f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);

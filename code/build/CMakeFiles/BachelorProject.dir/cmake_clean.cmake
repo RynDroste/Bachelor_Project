@@ -5,6 +5,8 @@ file(REMOVE_RECURSE
   "CMakeFiles/BachelorProject.dir/external/glad/src/glad.c.o.d"
   "CMakeFiles/BachelorProject.dir/src/main.cpp.o"
   "CMakeFiles/BachelorProject.dir/src/main.cpp.o.d"
+  "CMakeFiles/BachelorProject.dir/src/shallow_water_solver.cpp.o"
+  "CMakeFiles/BachelorProject.dir/src/shallow_water_solver.cpp.o.d"
 )
 
 # Per-language clean rules from dependency scanning.

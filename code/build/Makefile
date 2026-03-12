@@ -178,6 +178,30 @@ src/main.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/BachelorProject.dir/build.make CMakeFiles/BachelorProject.dir/src/main.cpp.s
 .PHONY : src/main.cpp.s
 
+src/shallow_water_solver.o: src/shallow_water_solver.cpp.o
+.PHONY : src/shallow_water_solver.o
+
+# target to build an object file
+src/shallow_water_solver.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/BachelorProject.dir/build.make CMakeFiles/BachelorProject.dir/src/shallow_water_solver.cpp.o
+.PHONY : src/shallow_water_solver.cpp.o
+
+src/shallow_water_solver.i: src/shallow_water_solver.cpp.i
+.PHONY : src/shallow_water_solver.i
+
+# target to preprocess a source file
+src/shallow_water_solver.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/BachelorProject.dir/build.make CMakeFiles/BachelorProject.dir/src/shallow_water_solver.cpp.i
+.PHONY : src/shallow_water_solver.cpp.i
+
+src/shallow_water_solver.s: src/shallow_water_solver.cpp.s
+.PHONY : src/shallow_water_solver.s
+
+# target to generate assembly for a file
+src/shallow_water_solver.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/BachelorProject.dir/build.make CMakeFiles/BachelorProject.dir/src/shallow_water_solver.cpp.s
+.PHONY : src/shallow_water_solver.cpp.s
+
 # Help Target
 help:
 	@echo "The following are some of the valid targets for this Makefile:"
@@ -193,6 +217,9 @@ help:
 	@echo "... src/main.o"
 	@echo "... src/main.i"
 	@echo "... src/main.s"
+	@echo "... src/shallow_water_solver.o"
+	@echo "... src/shallow_water_solver.i"
+	@echo "... src/shallow_water_solver.s"
 .PHONY : help
 
 

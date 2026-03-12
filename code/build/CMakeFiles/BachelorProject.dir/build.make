@@ -86,10 +86,24 @@ CMakeFiles/BachelorProject.dir/src/main.cpp.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/BachelorProject.dir/src/main.cpp.s"
 	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /Users/ryndroste/Desktop/Bachelor_Project/code/src/main.cpp -o CMakeFiles/BachelorProject.dir/src/main.cpp.s
 
+CMakeFiles/BachelorProject.dir/src/shallow_water_solver.cpp.o: CMakeFiles/BachelorProject.dir/flags.make
+CMakeFiles/BachelorProject.dir/src/shallow_water_solver.cpp.o: /Users/ryndroste/Desktop/Bachelor_Project/code/src/shallow_water_solver.cpp
+CMakeFiles/BachelorProject.dir/src/shallow_water_solver.cpp.o: CMakeFiles/BachelorProject.dir/compiler_depend.ts
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/Users/ryndroste/Desktop/Bachelor_Project/code/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_2) "Building CXX object CMakeFiles/BachelorProject.dir/src/shallow_water_solver.cpp.o"
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/BachelorProject.dir/src/shallow_water_solver.cpp.o -MF CMakeFiles/BachelorProject.dir/src/shallow_water_solver.cpp.o.d -o CMakeFiles/BachelorProject.dir/src/shallow_water_solver.cpp.o -c /Users/ryndroste/Desktop/Bachelor_Project/code/src/shallow_water_solver.cpp
+
+CMakeFiles/BachelorProject.dir/src/shallow_water_solver.cpp.i: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing CXX source to CMakeFiles/BachelorProject.dir/src/shallow_water_solver.cpp.i"
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /Users/ryndroste/Desktop/Bachelor_Project/code/src/shallow_water_solver.cpp > CMakeFiles/BachelorProject.dir/src/shallow_water_solver.cpp.i
+
+CMakeFiles/BachelorProject.dir/src/shallow_water_solver.cpp.s: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/BachelorProject.dir/src/shallow_water_solver.cpp.s"
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /Users/ryndroste/Desktop/Bachelor_Project/code/src/shallow_water_solver.cpp -o CMakeFiles/BachelorProject.dir/src/shallow_water_solver.cpp.s
+
 CMakeFiles/BachelorProject.dir/external/glad/src/glad.c.o: CMakeFiles/BachelorProject.dir/flags.make
 CMakeFiles/BachelorProject.dir/external/glad/src/glad.c.o: /Users/ryndroste/Desktop/Bachelor_Project/code/external/glad/src/glad.c
 CMakeFiles/BachelorProject.dir/external/glad/src/glad.c.o: CMakeFiles/BachelorProject.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/Users/ryndroste/Desktop/Bachelor_Project/code/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_2) "Building C object CMakeFiles/BachelorProject.dir/external/glad/src/glad.c.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/Users/ryndroste/Desktop/Bachelor_Project/code/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_3) "Building C object CMakeFiles/BachelorProject.dir/external/glad/src/glad.c.o"
 	/usr/bin/cc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT CMakeFiles/BachelorProject.dir/external/glad/src/glad.c.o -MF CMakeFiles/BachelorProject.dir/external/glad/src/glad.c.o.d -o CMakeFiles/BachelorProject.dir/external/glad/src/glad.c.o -c /Users/ryndroste/Desktop/Bachelor_Project/code/external/glad/src/glad.c
 
 CMakeFiles/BachelorProject.dir/external/glad/src/glad.c.i: cmake_force
@@ -103,19 +117,21 @@ CMakeFiles/BachelorProject.dir/external/glad/src/glad.c.s: cmake_force
 # Object files for target BachelorProject
 BachelorProject_OBJECTS = \
 "CMakeFiles/BachelorProject.dir/src/main.cpp.o" \
+"CMakeFiles/BachelorProject.dir/src/shallow_water_solver.cpp.o" \
 "CMakeFiles/BachelorProject.dir/external/glad/src/glad.c.o"
 
 # External object files for target BachelorProject
 BachelorProject_EXTERNAL_OBJECTS =
 
 BachelorProject: CMakeFiles/BachelorProject.dir/src/main.cpp.o
+BachelorProject: CMakeFiles/BachelorProject.dir/src/shallow_water_solver.cpp.o
 BachelorProject: CMakeFiles/BachelorProject.dir/external/glad/src/glad.c.o
 BachelorProject: CMakeFiles/BachelorProject.dir/build.make
 BachelorProject: /opt/homebrew/lib/libglfw.3.4.dylib
 BachelorProject: /opt/homebrew/lib/libglm.dylib
 BachelorProject: /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/System/Library/Frameworks/OpenGL.framework
 BachelorProject: CMakeFiles/BachelorProject.dir/link.txt
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --bold --progress-dir=/Users/ryndroste/Desktop/Bachelor_Project/code/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_3) "Linking CXX executable BachelorProject"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --bold --progress-dir=/Users/ryndroste/Desktop/Bachelor_Project/code/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_4) "Linking CXX executable BachelorProject"
 	$(CMAKE_COMMAND) -E cmake_link_script CMakeFiles/BachelorProject.dir/link.txt --verbose=$(VERBOSE)
 
 # Rule to build all files generated by this target.

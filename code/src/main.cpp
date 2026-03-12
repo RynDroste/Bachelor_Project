@@ -3,10 +3,10 @@
 
 #include <iostream>
 #include <vector>
-#include <cmath>
-#include <algorithm>
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
+
+#include "shallow_water_solver.h"
 
 namespace {
 
@@ -127,57 +127,11 @@ int main() {
         }
     }
 
-    const int N = gridSize + 1;
-    const float dx = 2.0f / gridSize;
-    const float dy = dx;
-    const float targetDt = 1.0f / 240.0f;
-    const float H = 1.0f;
-    const float g = 9.81f;
-    const float f = 0.1f;
-    const float linearDrag = 0.2f;
-    const float energyThreshold = 5e-4f;
-    const int lowEnergyStepsRequired = 180;
-
-    std::vector<float> etaCurr(N * N, 0.0f);
-    std::vector<float> etaNext(N * N, 0.0f);
-    std::vector<float> uCurr(N * (N + 1), 0.0f);
-    std::vector<float> uNext(N * (N + 1), 0.0f);
-    std::vector<float> vCurr((N + 1) * N, 0.0f);
-    std::vector<float> vNext((N + 1) * N, 0.0f);
-
+    ShallowWaterSolver solver(gridSize);
+    const int N = solver.resolution();
     auto idxEta = [N](int i, int j) { return i * N + j; };
-    auto idxU = [N](int i, int jFace) { return i * (N + 1) + jFace; };
-    auto idxV = [N](int iFace, int j) { return iFace * N + j; };
-
-    const float etaAmplitude = 0.2f;
-    const float sigmaCells = 6.0f;
-    const float twoSigma2 = 2.0f * sigmaCells * sigmaCells;
-    const int centerI = N / 2;
-    const int centerJ = N / 2;
-    for (int i = 0; i < N; ++i) {
-        for (int j = 0; j < N; ++j) {
-            const float di = static_cast<float>(i - centerI);
-            const float dj = static_cast<float>(j - centerJ);
-            const float r2 = di * di + dj * dj;
-            etaCurr[idxEta(i, j)] = etaAmplitude * std::exp(-r2 / twoSigma2);
-        }
-    }
-
-    const float waveC = std::sqrt(g * H);
-    const float invCellNorm = std::sqrt((1.0f / (dx * dx)) + (1.0f / (dy * dy)));
-    const float cflLimit = 0.9f;
-    const float maxStableDt = cflLimit / (waveC * invCellNorm);
-    const float dt = std::min(targetDt, maxStableDt);
-    const float cfl = waveC * dt * invCellNorm;
-    const float dampingFactor = std::exp(-linearDrag * dt);
-    if (dt < targetDt) {
-        std::cout << "CFL-limited dt: " << targetDt << " -> " << dt << " (CFL = " << cfl << ")\n";
-    }
 
     float lastTime = static_cast<float>(glfwGetTime());
-    float accumulator = 0.0f;
-    int lowEnergySteps = 0;
-    bool simulationActive = true;
     GLuint VAO, VBO, EBO;
     glGenVertexArrays(1, &VAO);
     glGenBuffers(1, &VBO);
@@ -203,107 +157,12 @@ int main() {
         float currentTime = static_cast<float>(glfwGetTime());
         float frameDt = currentTime - lastTime;
         lastTime = currentTime;
-        if (frameDt > 0.1f) {
-            frameDt = 0.1f;
-        }
-        accumulator += frameDt;
-
-        while (accumulator >= dt) {
-            if (simulationActive) {
-                for (int i = 0; i < N; ++i) {
-                    for (int j = 1; j < N; ++j) {
-                        const float etaDx = (etaCurr[idxEta(i, j)] - etaCurr[idxEta(i, j - 1)]) / dx;
-                        const float vInterp = 0.25f * (
-                            vCurr[idxV(i, j - 1)] + vCurr[idxV(i, j)] +
-                            vCurr[idxV(i + 1, j - 1)] + vCurr[idxV(i + 1, j)]
-                        );
-                        uNext[idxU(i, j)] = uCurr[idxU(i, j)] + dt * (-g * etaDx + f * vInterp);
-                    }
-                }
-
-                for (int i = 1; i < N; ++i) {
-                    for (int j = 0; j < N; ++j) {
-                        const float etaDy = (etaCurr[idxEta(i, j)] - etaCurr[idxEta(i - 1, j)]) / dy;
-                        const float uInterp = 0.25f * (
-                            uCurr[idxU(i - 1, j)] + uCurr[idxU(i - 1, j + 1)] +
-                            uCurr[idxU(i, j)] + uCurr[idxU(i, j + 1)]
-                        );
-                        vNext[idxV(i, j)] = vCurr[idxV(i, j)] + dt * (-g * etaDy - f * uInterp);
-                    }
-                }
-
-                for (int i = 0; i < N; ++i) {
-                    for (int j = 1; j < N; ++j) {
-                        uNext[idxU(i, j)] *= dampingFactor;
-                    }
-                }
-                for (int i = 1; i < N; ++i) {
-                    for (int j = 0; j < N; ++j) {
-                        vNext[idxV(i, j)] *= dampingFactor;
-                    }
-                }
-
-                for (int i = 0; i < N; ++i) {
-                    uNext[idxU(i, 0)] = 0.0f;
-                    uNext[idxU(i, N)] = 0.0f;
-                }
-                for (int j = 0; j < N; ++j) {
-                    vNext[idxV(0, j)] = 0.0f;
-                    vNext[idxV(N, j)] = 0.0f;
-                }
-
-                for (int i = 0; i < N; ++i) {
-                    for (int j = 0; j < N; ++j) {
-                        const float dudx = (uNext[idxU(i, j + 1)] - uNext[idxU(i, j)]) / dx;
-                        const float dvdy = (vNext[idxV(i + 1, j)] - vNext[idxV(i, j)]) / dy;
-                        etaNext[idxEta(i, j)] = etaCurr[idxEta(i, j)] - dt * H * (dudx + dvdy);
-                    }
-                }
-
-                etaCurr.swap(etaNext);
-                uCurr.swap(uNext);
-                vCurr.swap(vNext);
-
-                float kineticEnergy = 0.0f;
-                float potentialEnergy = 0.0f;
-                for (int i = 0; i < N; ++i) {
-                    for (int j = 1; j < N; ++j) {
-                        const float uVal = uCurr[idxU(i, j)];
-                        kineticEnergy += 0.5f * H * uVal * uVal;
-                    }
-                }
-                for (int i = 1; i < N; ++i) {
-                    for (int j = 0; j < N; ++j) {
-                        const float vVal = vCurr[idxV(i, j)];
-                        kineticEnergy += 0.5f * H * vVal * vVal;
-                    }
-                }
-                for (int i = 0; i < N; ++i) {
-                    for (int j = 0; j < N; ++j) {
-                        const float etaVal = etaCurr[idxEta(i, j)];
-                        potentialEnergy += 0.5f * g * etaVal * etaVal;
-                    }
-                }
-
-                const float totalEnergy = (kineticEnergy + potentialEnergy) * dx * dy;
-                if (totalEnergy < energyThreshold) {
-                    ++lowEnergySteps;
-                    if (lowEnergySteps >= lowEnergyStepsRequired) {
-                        simulationActive = false;
-                        std::cout << "Simulation stopped: energy below threshold (E = "
-                                  << totalEnergy << ")\n";
-                    }
-                } else {
-                    lowEnergySteps = 0;
-                }
-            }
-            accumulator -= dt;
-        }
+        solver.advance(frameDt);
 
         for (int i = 0; i < N; ++i) {
             for (int j = 0; j < N; ++j) {
                 int v = (i * N + j) * 3;
-                vertices[v + 1] = etaCurr[idxEta(i, j)];
+                vertices[v + 1] = solver.etaAt(i, j);
             }
         }
 

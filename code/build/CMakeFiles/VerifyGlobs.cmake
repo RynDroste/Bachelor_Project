@@ -55,6 +55,7 @@ endif()
 file(GLOB_RECURSE NEW_GLOB LIST_DIRECTORIES false "/Users/ryndroste/Desktop/Bachelor_Project/code/src/*.cpp")
 set(OLD_GLOB
   "/Users/ryndroste/Desktop/Bachelor_Project/code/src/main.cpp"
+  "/Users/ryndroste/Desktop/Bachelor_Project/code/src/shallow_water_solver.cpp"
   )
 if(NOT "${NEW_GLOB}" STREQUAL "${OLD_GLOB}")
   message("-- GLOB mismatch!")

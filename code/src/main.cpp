@@ -26,7 +26,7 @@ const GLchar* fragmentShaderSource = "#version 330 core\n"
     "out vec4 color;\n"
     "void main()\n"
     "{\n"
-    "color = vec4(1.0f, 0.5f, 0.2f, 1.0f);\n"
+    "color = vec4(0.0f, 0.0f, 1.0f, 1.0f);\n"
     "}\n\0";  //ShaderSource in GLSL
 
 int main() {
@@ -151,6 +151,7 @@ int main() {
     float lastTime = static_cast<float>(glfwGetTime());
     float accumulator = 0.0f;
     float E_old = 0.0f;
+    float E_new = 0.0f;
     int lowEnergySteps = 0;
     bool simulationActive = true;
     GLuint VAO, VBO, EBO;
@@ -228,12 +229,17 @@ int main() {
                     }
                 }
                 E_old = E_k + alpha * E_p;
+                const float deltaE = E_k * (1.0f - damping * damping);
+                E_new = E_old - deltaE;
+                if (E_new < 0.0f) {
+                    E_new = 0.0f;
+                }
 
-                if (E_old < energyThreshold) {
+                if (E_new < energyThreshold) {
                     ++lowEnergySteps;
                     if (lowEnergySteps >= lowEnergyStepsRequired) {
                         simulationActive = false;
-                        std::cout << "Simulation converged: E_old = " << E_old << std::endl;
+                        std::cout << "Simulation converged: E_new = " << E_new << std::endl;
                     }
                 } else {
                     lowEnergySteps = 0;

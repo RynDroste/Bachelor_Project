@@ -5,7 +5,7 @@
 | Status | Week | Planned Activity | Expected Result |
 | :--- | :--- | :--- | :--- |
 | ✅ | W1 | Setup environment and basic shaders | The screen can render a static plane with simple colors. |
-| ⬜ | W2 | Implement SWE base update cycle | The fundamental changes in the height field can be observed. |
+| ✅ | W2 | Implement SWE base update cycle | The fundamental changes in the height field can be observed. |
 | ⬜ | W3 | Staggered grid & advection implementation | Stable fluid motion |
 | ⬜ | W4 | CFL condition & fluctuation handling | Numerically stable simulation |
 | ⬜ | W5 | Blinn-Phong shading implementation | Giving the waveform a sense of depth and light and shadow feedback. |

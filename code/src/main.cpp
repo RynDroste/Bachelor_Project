@@ -3,7 +3,6 @@
 
 #include <iostream>
 #include <vector>
-#include <cmath>
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 
@@ -126,8 +125,28 @@ int main() {
         }
     }
 
+    const int N = gridSize + 1;
+    const float dx = 2.0f / gridSize;
+    const float a = 0.5f;
+    const float dt = 1.0f / 120.0f; //Assume 120 fps;
+    const float c = dx / dt * a; //wave speed
+    const float damping = 0.999f;
 
+    std::vector<float> hPrev(N * N, 0.0f);
+    std::vector<float> hCurr(N * N, 0.0f);
+    std::vector<float> hNext(N * N, 0.0f);
 
+    auto idx = [N](int i, int j) { return i * N + j; };
+
+    hCurr[idx(N/2, N/2)] = 0.5f; //Initial disturbance
+    hPrev = hCurr;
+    const float lambda = (c * dt / dx) * (c * dt / dx);
+    if (lambda > a) {
+        std::cout << "Warning: CFL may be unstable (lambda = " << lambda << ")\n";
+    }
+
+    float lastTime = static_cast<float>(glfwGetTime());
+    float accumulator = 0.0f;
     GLuint VAO, VBO, EBO;
     glGenVertexArrays(1, &VAO);
     glGenBuffers(1, &VBO);
@@ -150,14 +169,46 @@ int main() {
             glfwSetWindowShouldClose(window, true);
         }
 
-        float time = static_cast<float>(glfwGetTime());
-        for (int i = 0; i <= gridSize; ++i) {
-            for (int j = 0; j <= gridSize; ++j) {
-                int index = (i * (gridSize + 1) + j) * 3;
-                float x = vertices[index];
-                float z = vertices[index + 2];
-                float dist = std::sqrt(x * x + z * z);
-                vertices[index + 1] = 0.1f * std::sin(10.0f * dist - 5.0f * time);
+        float currentTime = static_cast<float>(glfwGetTime());
+        float frameDt = currentTime - lastTime;
+        lastTime = currentTime;
+        if (frameDt > 0.1f) {
+            frameDt = 0.1f;
+        }
+        accumulator += frameDt;
+
+        while (accumulator >= dt) {
+            for (int i = 1; i < N - 1; ++i) {
+                for (int j = 1; j < N - 1; ++j) {
+                    float hCenter = hCurr[idx(i, j)];
+                    float laplacian =
+                        hCurr[idx(i, j - 1)] + hCurr[idx(i, j + 1)] +
+                        hCurr[idx(i - 1, j)] + hCurr[idx(i + 1, j)] -
+                        4.0f * hCenter;
+
+                    hNext[idx(i, j)] =
+                        (2.0f * hCenter - hPrev[idx(i, j)] + lambda * laplacian) * damping;
+                }
+            }
+
+            for (int i = 0; i < N; ++i) {
+                hNext[idx(i, 0)] = 0.0f;
+                hNext[idx(i, N - 1)] = 0.0f;
+            }
+            for (int j = 0; j < N; ++j) {
+                hNext[idx(0, j)] = 0.0f;
+                hNext[idx(N - 1, j)] = 0.0f;
+            }
+
+            hPrev.swap(hCurr);
+            hCurr.swap(hNext);
+            accumulator -= dt;
+        }
+
+        for (int i = 0; i < N; ++i) {
+            for (int j = 0; j < N; ++j) {
+                int v = (i * N + j) * 3;
+                vertices[v + 1] = hCurr[idx(i, j)];
             }
         }
 

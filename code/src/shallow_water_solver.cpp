@@ -166,7 +166,35 @@ void ShallowWaterSolver::step() {
     }
 }
 
+void ShallowWaterSolver::updateTimeStepFromCfl() {
+    float maxAbsEta = 0.0f;
+    float maxAbsU = 0.0f;
+    float maxAbsV = 0.0f;
 
+    for (int i = 0; i < N; ++i) {
+        for (int j = 0; j < N; ++j) {
+            maxAbsEta = std::max(maxAbsEta, std::fabs(etaCurr[idxEta(i, j)]));
+        }
+    }
+    for (int i = 0; i < N; ++i) {
+        for (int j = 1; j < N; ++j) {
+            maxAbsU = std::max(maxAbsU, std::fabs(uCurr[idxU(i, j)]));
+        }
+    }
+    for (int i = 1; i < N; ++i) {
+        for (int j = 0; j < N; ++j) {
+            maxAbsV = std::max(maxAbsV, std::fabs(vCurr[idxV(i, j)]));
+        }
+    }
+
+    const float waveC = std::sqrt(g * std::max(H + maxAbsEta, 1e-5f));
+    const float sx = (waveC + maxAbsU) / dx;
+    const float sy = (waveC + maxAbsV) / dy;
+    const float denom = std::max(sx + sy, 1e-6f);
+    const float maxStableDt = cflLimit / denom;
+    const float minDt = targetDt * 0.2f;
+    dt = std::clamp(maxStableDt, minDt, targetDt);
+}
 
 void ShallowWaterSolver::applyShapiroFilter(std::vector<float>& etaField) const {
     if (shapiroStrength <= 0.0f) {

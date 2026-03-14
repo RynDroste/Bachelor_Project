@@ -157,7 +157,8 @@ int main() {
         float currentTime = static_cast<float>(glfwGetTime());
         float frameDt = currentTime - lastTime;
         lastTime = currentTime;
-        solver.advance(frameDt);
+        const float simulationTimeScale = 0.5f;
+        solver.advance(frameDt * simulationTimeScale);
 
         for (int i = 0; i < N; ++i) {
             for (int j = 0; j < N; ++j) {

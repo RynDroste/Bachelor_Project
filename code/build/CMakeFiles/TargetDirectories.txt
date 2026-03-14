@@ -1,3 +1,0 @@
-/Users/ryndroste/Desktop/Bachelor_Project/code/build/CMakeFiles/BachelorProject.dir
-/Users/ryndroste/Desktop/Bachelor_Project/code/build/CMakeFiles/edit_cache.dir
-/Users/ryndroste/Desktop/Bachelor_Project/code/build/CMakeFiles/rebuild_cache.dir

@@ -17,29 +17,51 @@ private:
     int idxV(int iFace, int j) const;
 
     void step();
+    void computeRhs(
+        const std::vector<float>& etaField,
+        const std::vector<float>& uField,
+        const std::vector<float>& vField,
+        std::vector<float>& etaRhs,
+        std::vector<float>& uRhs,
+        std::vector<float>& vRhs
+    ) const;
+    void enforceVelocityBoundaries(std::vector<float>& uField, std::vector<float>& vField) const;
+    float sampleEta(const std::vector<float>& etaField, float xEta, float yEta) const;
+    float sampleU(const std::vector<float>& uField, float xEta, float yEta) const;
+    float sampleV(const std::vector<float>& vField, float xEta, float yEta) const;
+    float bilinearSample(const std::vector<float>& field, int rows, int cols, float rowCoord, float colCoord) const;
+    void updateTimeStepFromCfl();
+    void applyShapiroFilter(std::vector<float>& etaField) const;
 
-    int gridSize_;
-    int N_;
-    float dx_;
-    float dy_;
-    float targetDt_;
-    float H_;
-    float g_;
-    float f_;
-    float linearDrag_;
-    float energyThreshold_;
-    int lowEnergyStepsRequired_;
-    float dt_;
-    float dampingFactor_;
+    int gridSize;
+    int N;
+    float dx;
+    float dy;
+    float targetDt;
+    float H;
+    float g;
+    float f;
+    float linearDrag;
+    float cflLimit;
+    float shapiroStrength;
+    float energyThreshold;
+    int lowEnergyStepsRequired;
+    float dt;
 
-    std::vector<float> etaCurr_;
-    std::vector<float> etaNext_;
-    std::vector<float> uCurr_;
-    std::vector<float> uNext_;
-    std::vector<float> vCurr_;
-    std::vector<float> vNext_;
+    std::vector<float> etaCurr;
+    std::vector<float> etaNext;
+    std::vector<float> etaStage;
+    std::vector<float> etaRhs;
+    std::vector<float> uCurr;
+    std::vector<float> uNext;
+    std::vector<float> uStage;
+    std::vector<float> uRhs;
+    std::vector<float> vCurr;
+    std::vector<float> vNext;
+    std::vector<float> vStage;
+    std::vector<float> vRhs;
 
-    float accumulator_;
-    int lowEnergySteps_;
-    bool simulationActive_;
+    float accumulator;
+    int lowEnergySteps;
+    bool simulationActive;
 };

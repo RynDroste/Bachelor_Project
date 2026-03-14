@@ -5,176 +5,318 @@
 #include <iostream>
 
 ShallowWaterSolver::ShallowWaterSolver(int gridSize)
-    : gridSize_(gridSize),
-      N_(gridSize + 1),
-      dx_(2.0f / static_cast<float>(gridSize)),
-      dy_(dx_),
-      targetDt_(1.0f / 240.0f),
-      H_(1.0f),
-      g_(9.81f),
-      f_(0.1f),
-      linearDrag_(0.2f),
-      energyThreshold_(5e-4f),
-      lowEnergyStepsRequired_(180),
-      dt_(0.0f),
-      dampingFactor_(1.0f),
-      etaCurr_(N_ * N_, 0.0f),
-      etaNext_(N_ * N_, 0.0f),
-      uCurr_(N_ * (N_ + 1), 0.0f),
-      uNext_(N_ * (N_ + 1), 0.0f),
-      vCurr_((N_ + 1) * N_, 0.0f),
-      vNext_((N_ + 1) * N_, 0.0f),
-      accumulator_(0.0f),
-      lowEnergySteps_(0),
-      simulationActive_(true) {
+    : gridSize(gridSize),
+      N(gridSize + 1),
+      dx(2.0f / static_cast<float>(gridSize)),
+      dy(dx),
+      targetDt(1.0f / 120.0f),
+      H(1.0f),
+      g(9.81f),
+      f(0.1f),
+      linearDrag(0.2f),
+      cflLimit(0.45f),
+      shapiroStrength(0.04f),
+      energyThreshold(5e-4f),
+      lowEnergyStepsRequired(180),
+      dt(0.0f),
+      etaCurr(N * N, 0.0f),
+      etaNext(N * N, 0.0f),
+      etaStage(N * N, 0.0f),
+      etaRhs(N * N, 0.0f),
+      uCurr(N * (N + 1), 0.0f),
+      uNext(N * (N + 1), 0.0f),
+      uStage(N * (N + 1), 0.0f),
+      uRhs(N * (N + 1), 0.0f),
+      vCurr((N + 1) * N, 0.0f),
+      vNext((N + 1) * N, 0.0f),
+      vStage((N + 1) * N, 0.0f),
+      vRhs((N + 1) * N, 0.0f),
+      accumulator(0.0f),
+      lowEnergySteps(0),
+      simulationActive(true) {
     const float etaAmplitude = 0.2f;
     const float sigmaCells = 6.0f;
     const float twoSigma2 = 2.0f * sigmaCells * sigmaCells;
-    const int centerI = N_ / 2;
-    const int centerJ = N_ / 2;
+    const int centerI = N / 2;
+    const int centerJ = N / 2;
 
-    for (int i = 0; i < N_; ++i) {
-        for (int j = 0; j < N_; ++j) {
+    for (int i = 0; i < N; ++i) {
+        for (int j = 0; j < N; ++j) {
             const float di = static_cast<float>(i - centerI);
             const float dj = static_cast<float>(j - centerJ);
             const float r2 = di * di + dj * dj;
-            etaCurr_[idxEta(i, j)] = etaAmplitude * std::exp(-r2 / twoSigma2);
+            etaCurr[idxEta(i, j)] = etaAmplitude * std::exp(-r2 / twoSigma2);
         }
     }
 
-    const float waveC = std::sqrt(g_ * H_);
-    const float invCellNorm = std::sqrt((1.0f / (dx_ * dx_)) + (1.0f / (dy_ * dy_)));
-    const float cflLimit = 0.9f;
-    const float maxStableDt = cflLimit / (waveC * invCellNorm);
-    dt_ = std::min(targetDt_, maxStableDt);
-    const float cfl = waveC * dt_ * invCellNorm;
-    dampingFactor_ = std::exp(-linearDrag_ * dt_);
-
-    if (dt_ < targetDt_) {
-        std::cout << "CFL-limited dt: " << targetDt_ << " -> " << dt_ << " (CFL = " << cfl << ")\n";
-    }
+    updateTimeStepFromCfl();
 }
 
 void ShallowWaterSolver::advance(float frameDt) {
     if (frameDt > 0.1f) {
         frameDt = 0.1f;
     }
-    accumulator_ += frameDt;
+    accumulator += frameDt;
 
-    while (accumulator_ >= dt_) {
-        if (simulationActive_) {
+    while (accumulator >= dt) {
+        if (simulationActive) {
             step();
         }
-        accumulator_ -= dt_;
+        accumulator -= dt;
     }
 }
 
 float ShallowWaterSolver::etaAt(int i, int j) const {
-    return etaCurr_[idxEta(i, j)];
+    return etaCurr[idxEta(i, j)];
 }
 
 int ShallowWaterSolver::resolution() const {
-    return N_;
+    return N;
 }
 
 int ShallowWaterSolver::idxEta(int i, int j) const {
-    return i * N_ + j;
+    return i * N + j;
 }
 
 int ShallowWaterSolver::idxU(int i, int jFace) const {
-    return i * (N_ + 1) + jFace;
+    return i * (N + 1) + jFace;
 }
 
 int ShallowWaterSolver::idxV(int iFace, int j) const {
-    return iFace * N_ + j;
+    return iFace * N + j;
 }
 
 void ShallowWaterSolver::step() {
-    for (int i = 0; i < N_; ++i) {
-        for (int j = 1; j < N_; ++j) {
-            const float etaDx = (etaCurr_[idxEta(i, j)] - etaCurr_[idxEta(i, j - 1)]) / dx_;
-            const float vInterp = 0.25f * (
-                vCurr_[idxV(i, j - 1)] + vCurr_[idxV(i, j)] +
-                vCurr_[idxV(i + 1, j - 1)] + vCurr_[idxV(i + 1, j)]
-            );
-            uNext_[idxU(i, j)] = uCurr_[idxU(i, j)] + dt_ * (-g_ * etaDx + f_ * vInterp);
-        }
-    }
+    updateTimeStepFromCfl();
 
-    for (int i = 1; i < N_; ++i) {
-        for (int j = 0; j < N_; ++j) {
-            const float etaDy = (etaCurr_[idxEta(i, j)] - etaCurr_[idxEta(i - 1, j)]) / dy_;
-            const float uInterp = 0.25f * (
-                uCurr_[idxU(i - 1, j)] + uCurr_[idxU(i - 1, j + 1)] +
-                uCurr_[idxU(i, j)] + uCurr_[idxU(i, j + 1)]
-            );
-            vNext_[idxV(i, j)] = vCurr_[idxV(i, j)] + dt_ * (-g_ * etaDy - f_ * uInterp);
-        }
+    // SSP-RK3 stage 1
+    computeRhs(etaCurr, uCurr, vCurr, etaRhs, uRhs, vRhs);
+    for (int i = 0; i < N * N; ++i) {
+        etaStage[i] = etaCurr[i] + dt * etaRhs[i];
     }
-
-    for (int i = 0; i < N_; ++i) {
-        for (int j = 1; j < N_; ++j) {
-            uNext_[idxU(i, j)] *= dampingFactor_;
-        }
+    for (int i = 0; i < N * (N + 1); ++i) {
+        uStage[i] = uCurr[i] + dt * uRhs[i];
     }
-
-    for (int i = 1; i < N_; ++i) {
-        for (int j = 0; j < N_; ++j) {
-            vNext_[idxV(i, j)] *= dampingFactor_;
-        }
+    for (int i = 0; i < (N + 1) * N; ++i) {
+        vStage[i] = vCurr[i] + dt * vRhs[i];
     }
+    enforceVelocityBoundaries(uStage, vStage);
 
-    for (int i = 0; i < N_; ++i) {
-        uNext_[idxU(i, 0)] = 0.0f;
-        uNext_[idxU(i, N_)] = 0.0f;
+    // SSP-RK3 stage 2
+    computeRhs(etaStage, uStage, vStage, etaRhs, uRhs, vRhs);
+    for (int i = 0; i < N * N; ++i) {
+        etaStage[i] = 0.75f * etaCurr[i] + 0.25f * (etaStage[i] + dt * etaRhs[i]);
     }
-
-    for (int j = 0; j < N_; ++j) {
-        vNext_[idxV(0, j)] = 0.0f;
-        vNext_[idxV(N_, j)] = 0.0f;
+    for (int i = 0; i < N * (N + 1); ++i) {
+        uStage[i] = 0.75f * uCurr[i] + 0.25f * (uStage[i] + dt * uRhs[i]);
     }
-
-    for (int i = 0; i < N_; ++i) {
-        for (int j = 0; j < N_; ++j) {
-            const float dudx = (uNext_[idxU(i, j + 1)] - uNext_[idxU(i, j)]) / dx_;
-            const float dvdy = (vNext_[idxV(i + 1, j)] - vNext_[idxV(i, j)]) / dy_;
-            etaNext_[idxEta(i, j)] = etaCurr_[idxEta(i, j)] - dt_ * H_ * (dudx + dvdy);
-        }
+    for (int i = 0; i < (N + 1) * N; ++i) {
+        vStage[i] = 0.75f * vCurr[i] + 0.25f * (vStage[i] + dt * vRhs[i]);
     }
+    enforceVelocityBoundaries(uStage, vStage);
 
-    etaCurr_.swap(etaNext_);
-    uCurr_.swap(uNext_);
-    vCurr_.swap(vNext_);
+    // SSP-RK3 stage 3
+    computeRhs(etaStage, uStage, vStage, etaRhs, uRhs, vRhs);
+    for (int i = 0; i < N * N; ++i) {
+        etaNext[i] = (1.0f / 3.0f) * etaCurr[i] + (2.0f / 3.0f) * (etaStage[i] + dt * etaRhs[i]);
+    }
+    for (int i = 0; i < N * (N + 1); ++i) {
+        uNext[i] = (1.0f / 3.0f) * uCurr[i] + (2.0f / 3.0f) * (uStage[i] + dt * uRhs[i]);
+    }
+    for (int i = 0; i < (N + 1) * N; ++i) {
+        vNext[i] = (1.0f / 3.0f) * vCurr[i] + (2.0f / 3.0f) * (vStage[i] + dt * vRhs[i]);
+    }
+    enforceVelocityBoundaries(uNext, vNext);
+
+    etaCurr.swap(etaNext);
+    uCurr.swap(uNext);
+    vCurr.swap(vNext);
+    applyShapiroFilter(etaCurr);
 
     float kineticEnergy = 0.0f;
     float potentialEnergy = 0.0f;
-    for (int i = 0; i < N_; ++i) {
-        for (int j = 1; j < N_; ++j) {
-            const float uVal = uCurr_[idxU(i, j)];
-            kineticEnergy += 0.5f * H_ * uVal * uVal;
+    for (int i = 0; i < N; ++i) {
+        for (int j = 1; j < N; ++j) {
+            const float uVal = uCurr[idxU(i, j)];
+            kineticEnergy += 0.5f * H * uVal * uVal;
         }
     }
-    for (int i = 1; i < N_; ++i) {
-        for (int j = 0; j < N_; ++j) {
-            const float vVal = vCurr_[idxV(i, j)];
-            kineticEnergy += 0.5f * H_ * vVal * vVal;
+    for (int i = 1; i < N; ++i) {
+        for (int j = 0; j < N; ++j) {
+            const float vVal = vCurr[idxV(i, j)];
+            kineticEnergy += 0.5f * H * vVal * vVal;
         }
     }
-    for (int i = 0; i < N_; ++i) {
-        for (int j = 0; j < N_; ++j) {
-            const float etaVal = etaCurr_[idxEta(i, j)];
-            potentialEnergy += 0.5f * g_ * etaVal * etaVal;
+    for (int i = 0; i < N; ++i) {
+        for (int j = 0; j < N; ++j) {
+            const float etaVal = etaCurr[idxEta(i, j)];
+            potentialEnergy += 0.5f * g * etaVal * etaVal;
         }
     }
 
-    const float totalEnergy = (kineticEnergy + potentialEnergy) * dx_ * dy_;
-    if (totalEnergy < energyThreshold_) {
-        ++lowEnergySteps_;
-        if (lowEnergySteps_ >= lowEnergyStepsRequired_) {
-            simulationActive_ = false;
+    const float totalEnergy = (kineticEnergy + potentialEnergy) * dx * dy;
+    if (totalEnergy < energyThreshold) {
+        ++lowEnergySteps;
+        if (lowEnergySteps >= lowEnergyStepsRequired) {
+            simulationActive = false;
             std::cout << "Simulation stopped: energy below threshold (E = " << totalEnergy << ")\n";
         }
     } else {
-        lowEnergySteps_ = 0;
+        lowEnergySteps = 0;
     }
+}
+
+
+
+void ShallowWaterSolver::applyShapiroFilter(std::vector<float>& etaField) const {
+    if (shapiroStrength <= 0.0f) {
+        return;
+    }
+
+    std::vector<float> filtered = etaField;
+    for (int i = 1; i < N - 1; ++i) {
+        for (int j = 1; j < N - 1; ++j) {
+            const int c = idxEta(i, j);
+            const float lap =
+                etaField[idxEta(i + 1, j)] +
+                etaField[idxEta(i - 1, j)] +
+                etaField[idxEta(i, j + 1)] +
+                etaField[idxEta(i, j - 1)] -
+                4.0f * etaField[c];
+            filtered[c] = etaField[c] + shapiroStrength * lap;
+        }
+    }
+    etaField.swap(filtered);
+}
+
+void ShallowWaterSolver::computeRhs(
+    const std::vector<float>& etaField,
+    const std::vector<float>& uField,
+    const std::vector<float>& vField,
+    std::vector<float>& etaRhsOut,
+    std::vector<float>& uRhsOut,
+    std::vector<float>& vRhsOut
+) const {
+    for (int i = 0; i < N; ++i) {
+        for (int j = 0; j < N; ++j) {
+            const int idEta = idxEta(i, j);
+            const float xEta = static_cast<float>(j);
+            const float yEta = static_cast<float>(i);
+
+            const float uAtEta = sampleU(uField, xEta, yEta);
+            const float vAtEta = sampleV(vField, xEta, yEta);
+
+            const float backX = std::clamp(xEta - (dt / dx) * uAtEta, 0.0f, static_cast<float>(N - 1));
+            const float backY = std::clamp(yEta - (dt / dy) * vAtEta, 0.0f, static_cast<float>(N - 1));
+            const float etaDepart = sampleEta(etaField, backX, backY);
+            const float advEta = (etaDepart - etaField[idEta]) / dt;
+
+            const float dudx = (uField[idxU(i, j + 1)] - uField[idxU(i, j)]) / dx;
+            const float dvdy = (vField[idxV(i + 1, j)] - vField[idxV(i, j)]) / dy;
+            const float divUV = dudx + dvdy;
+            etaRhsOut[idEta] = advEta - (H + etaField[idEta]) * divUV;
+        }
+    }
+
+    for (int i = 0; i < N; ++i) {
+        for (int j = 0; j <= N; ++j) {
+            const int idU = idxU(i, j);
+            if (j == 0 || j == N) {
+                uRhsOut[idU] = 0.0f;
+                continue;
+            }
+
+            const float xU = static_cast<float>(j) - 0.5f;
+            const float yU = static_cast<float>(i);
+            const float uAtU = sampleU(uField, xU, yU);
+            const float vAtU = sampleV(vField, xU, yU);
+
+            const float backX = std::clamp(xU - (dt / dx) * uAtU, -0.5f, static_cast<float>(N) - 0.5f);
+            const float backY = std::clamp(yU - (dt / dy) * vAtU, 0.0f, static_cast<float>(N - 1));
+            const float uDepart = sampleU(uField, backX, backY);
+            const float advU = (uDepart - uField[idU]) / dt;
+
+            const float etaDx = (etaField[idxEta(i, j)] - etaField[idxEta(i, j - 1)]) / dx;
+            const float source = -g * etaDx + f * vAtU - linearDrag * uField[idU];
+            uRhsOut[idU] = advU + source;
+        }
+    }
+
+    for (int i = 0; i <= N; ++i) {
+        for (int j = 0; j < N; ++j) {
+            const int idV = idxV(i, j);
+            if (i == 0 || i == N) {
+                vRhsOut[idV] = 0.0f;
+                continue;
+            }
+
+            const float xV = static_cast<float>(j);
+            const float yV = static_cast<float>(i) - 0.5f;
+            const float uAtV = sampleU(uField, xV, yV);
+            const float vAtV = sampleV(vField, xV, yV);
+
+            const float backX = std::clamp(xV - (dt / dx) * uAtV, 0.0f, static_cast<float>(N - 1));
+            const float backY = std::clamp(yV - (dt / dy) * vAtV, -0.5f, static_cast<float>(N) - 0.5f);
+            const float vDepart = sampleV(vField, backX, backY);
+            const float advV = (vDepart - vField[idV]) / dt;
+
+            const float etaDy = (etaField[idxEta(i, j)] - etaField[idxEta(i - 1, j)]) / dy;
+            const float source = -g * etaDy - f * uAtV - linearDrag * vField[idV];
+            vRhsOut[idV] = advV + source;
+        }
+    }
+}
+
+void ShallowWaterSolver::enforceVelocityBoundaries(std::vector<float>& uField, std::vector<float>& vField) const {
+    for (int i = 0; i < N; ++i) {
+        uField[idxU(i, 0)] = 0.0f;
+        uField[idxU(i, N)] = 0.0f;
+    }
+    for (int j = 0; j < N; ++j) {
+        vField[idxV(0, j)] = 0.0f;
+        vField[idxV(N, j)] = 0.0f;
+    }
+}
+
+float ShallowWaterSolver::sampleEta(const std::vector<float>& etaField, float xEta, float yEta) const {
+    return bilinearSample(etaField, N, N, yEta, xEta);
+}
+
+float ShallowWaterSolver::sampleU(const std::vector<float>& uField, float xEta, float yEta) const {
+    const float rowCoord = yEta;
+    const float colCoord = xEta + 0.5f;
+    return bilinearSample(uField, N, N + 1, rowCoord, colCoord);
+}
+
+float ShallowWaterSolver::sampleV(const std::vector<float>& vField, float xEta, float yEta) const {
+    const float rowCoord = yEta + 0.5f;
+    const float colCoord = xEta;
+    return bilinearSample(vField, N + 1, N, rowCoord, colCoord);
+}
+
+float ShallowWaterSolver::bilinearSample(
+    const std::vector<float>& field,
+    int rows,
+    int cols,
+    float rowCoord,
+    float colCoord
+) const {
+    const float r = std::clamp(rowCoord, 0.0f, static_cast<float>(rows - 1));
+    const float c = std::clamp(colCoord, 0.0f, static_cast<float>(cols - 1));
+
+    const int r0 = static_cast<int>(std::floor(r));
+    const int c0 = static_cast<int>(std::floor(c));
+    const int r1 = std::min(r0 + 1, rows - 1);
+    const int c1 = std::min(c0 + 1, cols - 1);
+    const float tr = r - static_cast<float>(r0);
+    const float tc = c - static_cast<float>(c0);
+
+    const float f00 = field[r0 * cols + c0];
+    const float f01 = field[r0 * cols + c1];
+    const float f10 = field[r1 * cols + c0];
+    const float f11 = field[r1 * cols + c1];
+
+    const float top = (1.0f - tc) * f00 + tc * f01;
+    const float bottom = (1.0f - tc) * f10 + tc * f11;
+    return (1.0f - tr) * top + tr * bottom;
 }

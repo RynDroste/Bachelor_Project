@@ -7,15 +7,15 @@ C_DEFINES =
 
 C_INCLUDES = -I/Users/ryndroste/Desktop/Bachelor_Project/code/src -I/Users/ryndroste/Desktop/Bachelor_Project/code/external/glad/include -isystem /opt/homebrew/include -iframework /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/System/Library/Frameworks
 
-C_FLAGSarm64 = -std=c11 -arch arm64
+C_FLAGSarm64 = -O3 -DNDEBUG -std=c11 -arch arm64
 
-C_FLAGS = -std=c11 -arch arm64
+C_FLAGS = -O3 -DNDEBUG -std=c11 -arch arm64
 
 CXX_DEFINES = 
 
 CXX_INCLUDES = -I/Users/ryndroste/Desktop/Bachelor_Project/code/src -I/Users/ryndroste/Desktop/Bachelor_Project/code/external/glad/include -isystem /opt/homebrew/include -iframework /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/System/Library/Frameworks
 
-CXX_FLAGSarm64 = -std=c++17 -arch arm64
+CXX_FLAGSarm64 = -O3 -DNDEBUG -std=c++17 -arch arm64
 
-CXX_FLAGS = -std=c++17 -arch arm64
+CXX_FLAGS = -O3 -DNDEBUG -std=c++17 -arch arm64
 

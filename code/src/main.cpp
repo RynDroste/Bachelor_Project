@@ -129,7 +129,6 @@ int main() {
 
     ShallowWaterSolver solver(gridSize);
     const int N = solver.resolution();
-    auto idxEta = [N](int i, int j) { return i * N + j; };
 
     float lastTime = static_cast<float>(glfwGetTime());
     GLuint VAO, VBO, EBO;

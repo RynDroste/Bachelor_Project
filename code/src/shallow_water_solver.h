@@ -39,11 +39,9 @@ private:
         std::vector<float>& vField,
         float dtStep
     ) const;
-    float computeMaxAbsDivergence(const std::vector<float>& uField, const std::vector<float>& vField) const;
     void updateTimeStepFromCfl();
     void applyShapiroFilter(std::vector<float>& etaField) const;
 
-    int gridSize;
     int N;
     float dx;
     float dy;
@@ -75,8 +73,6 @@ private:
 
     PressureSolver pressureSolver;
     bool enablePressureProjection;
-    int stepCount;
-    int diagnosticsInterval;
 
     float accumulator;
     int lowEnergySteps;

@@ -5,8 +5,7 @@
 #include <iostream>
 
 ShallowWaterSolver::ShallowWaterSolver(int gridSize)
-    : gridSize(gridSize),
-      N(gridSize + 1),
+    : N(gridSize + 1),
       dx(2.0f / static_cast<float>(gridSize)),
       dy(dx),
       targetDt(1.0f / 120.0f),
@@ -35,8 +34,6 @@ ShallowWaterSolver::ShallowWaterSolver(int gridSize)
       vRhs((N + 1) * N, 0.0f),
       pressureSolver(N, dx, dy),
       enablePressureProjection(false),
-      stepCount(0),
-      diagnosticsInterval(30),
       accumulator(0.0f),
       lowEnergySteps(0),
       simulationActive(true) {
@@ -170,21 +167,6 @@ void ShallowWaterSolver::step() {
     }
 
     const float totalEnergy = (kineticEnergy + potentialEnergy) * dx * dy;
-    float maxAbsEta = 0.0f;
-    for (float v : etaCurr) {
-        maxAbsEta = std::max(maxAbsEta, std::fabs(v));
-    }
-    const float maxAbsDiv = computeMaxAbsDivergence(uCurr, vCurr);
-    ++stepCount;
-    if (stepCount % diagnosticsInterval == 0) {
-        std::cout << "[diag] step=" << stepCount
-                  << " dt=" << dt
-                  << " max|eta|=" << maxAbsEta
-                  << " E=" << totalEnergy
-                  << " max|div|=" << maxAbsDiv
-                  << '\n';
-    }
-
     if (totalEnergy < energyThreshold) {
         ++lowEnergySteps;
         if (lowEnergySteps >= lowEnergyStepsRequired) {
@@ -194,21 +176,6 @@ void ShallowWaterSolver::step() {
     } else {
         lowEnergySteps = 0;
     }
-}
-
-float ShallowWaterSolver::computeMaxAbsDivergence(
-    const std::vector<float>& uField,
-    const std::vector<float>& vField
-) const {
-    float maxAbsDiv = 0.0f;
-    for (int i = 0; i < N; ++i) {
-        for (int j = 0; j < N; ++j) {
-            const float dudx = (uField[idxU(i, j + 1)] - uField[idxU(i, j)]) / dx;
-            const float dvdy = (vField[idxV(i + 1, j)] - vField[idxV(i, j)]) / dy;
-            maxAbsDiv = std::max(maxAbsDiv, std::fabs(dudx + dvdy));
-        }
-    }
-    return maxAbsDiv;
 }
 
 void ShallowWaterSolver::updateTimeStepFromCfl() {
@@ -292,7 +259,8 @@ void ShallowWaterSolver::applyBoundarySponge(
             );
             const float sigma = spongeSigma(d);
             if (sigma > 0.0f) {
-                etaField[idxEta(i, j)] *= std::exp(-sigma * dtStep);
+                const float damping = std::exp(-sigma * dtStep);
+                etaField[idxEta(i, j)] *= damping;
             }
         }
     }
@@ -304,7 +272,8 @@ void ShallowWaterSolver::applyBoundarySponge(
             );
             const float sigma = spongeSigma(d);
             if (sigma > 0.0f) {
-                uField[idxU(i, jFace)] *= std::exp(-sigma * dtStep);
+                const float damping = std::exp(-sigma * dtStep);
+                uField[idxU(i, jFace)] *= damping;
             }
         }
     }
@@ -316,7 +285,8 @@ void ShallowWaterSolver::applyBoundarySponge(
             );
             const float sigma = spongeSigma(d);
             if (sigma > 0.0f) {
-                vField[idxV(iFace, j)] *= std::exp(-sigma * dtStep);
+                const float damping = std::exp(-sigma * dtStep);
+                vField[idxV(iFace, j)] *= damping;
             }
         }
     }

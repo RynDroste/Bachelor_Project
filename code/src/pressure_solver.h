@@ -46,6 +46,3 @@ private:
     std::vector<float> p;
     std::vector<float> pNext;
 };
-#pragma once
-
-#include <vector>

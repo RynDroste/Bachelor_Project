@@ -31,6 +31,8 @@ ShallowWaterSolver::ShallowWaterSolver(int gridSize)
       vNext((N + 1) * N, 0.0f),
       vStage((N + 1) * N, 0.0f),
       vRhs((N + 1) * N, 0.0f),
+      pressureSolver(N, dx, dy),
+      enablePressureProjection(false),
       accumulator(0.0f),
       lowEnergySteps(0),
       simulationActive(true) {
@@ -50,6 +52,10 @@ ShallowWaterSolver::ShallowWaterSolver(int gridSize)
     }
 
     updateTimeStepFromCfl();
+    pressureSolver.setDensity(1.0f);
+    pressureSolver.setMeanDepth(H);
+    pressureSolver.setIterations(40);
+    pressureSolver.setTolerance(1e-5f);
 }
 
 void ShallowWaterSolver::advance(float frameDt) {
@@ -127,6 +133,9 @@ void ShallowWaterSolver::step() {
         vNext[i] = (1.0f / 3.0f) * vCurr[i] + (2.0f / 3.0f) * (vStage[i] + dt * vRhs[i]);
     }
     enforceVelocityBoundaries(uNext, vNext);
+    if (enablePressureProjection) {
+        pressureSolver.project(uNext, vNext, dt);
+    }
 
     etaCurr.swap(etaNext);
     uCurr.swap(uNext);

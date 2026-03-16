@@ -2,6 +2,8 @@
 
 #include <vector>
 
+#include "pressure_solver.h"
+
 class ShallowWaterSolver {
 public:
     explicit ShallowWaterSolver(int gridSize);
@@ -60,6 +62,9 @@ private:
     std::vector<float> vNext;
     std::vector<float> vStage;
     std::vector<float> vRhs;
+
+    PressureSolver pressureSolver;
+    bool enablePressureProjection;
 
     float accumulator;
     int lowEnergySteps;

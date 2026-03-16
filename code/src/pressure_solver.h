@@ -7,6 +7,7 @@ public:
     PressureSolver(int resolution, float dx, float dy);
 
     void setDensity(float rhoValue);
+    void setMeanDepth(float depthValue);
     void setIterations(int maxIters);
     void setTolerance(float eps);
 
@@ -39,6 +40,7 @@ private:
     float dx;
     float dy;
     float rho;
+    float meanDepth;
     int maxIterations;
     float tolerance;
 

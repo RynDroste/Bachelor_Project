@@ -2,14 +2,14 @@
 
 #include <algorithm>
 #include <cmath>
-#include <numeric>
 
 PressureSolver::PressureSolver(int resolution, float dx, float dy)
     : N(resolution),
       dx(dx),
       dy(dy),
       rho(1.0f),
-      maxIterations(120),
+      meanDepth(1.0f),
+      maxIterations(60),
       tolerance(1e-5f),
       rhs(N * N, 0.0f),
       p(N * N, 0.0f),
@@ -17,6 +17,10 @@ PressureSolver::PressureSolver(int resolution, float dx, float dy)
 
 void PressureSolver::setDensity(float rhoValue) {
     rho = std::max(rhoValue, 1e-6f);
+}
+
+void PressureSolver::setMeanDepth(float depthValue) {
+    meanDepth = std::max(depthValue, 1e-4f);
 }
 
 void PressureSolver::setIterations(int maxIters) {
@@ -59,23 +63,26 @@ void PressureSolver::buildRhs(
     const std::vector<float>& vField,
     float dt
 ) {
-    const float invDt = 1.0f / dt;
+    const float beta = (rho * meanDepth * meanDepth) / (3.0f * dt);
     for (int i = 0; i < N; ++i) {
         for (int j = 0; j < N; ++j) {
             const float dudx = (uField[idxU(i, j + 1)] - uField[idxU(i, j)]) / dx;
             const float dvdy = (vField[idxV(i + 1, j)] - vField[idxV(i, j)]) / dy;
-            rhs[idxCell(i, j)] = (rho * invDt) * (dudx + dvdy);
+            rhs[idxCell(i, j)] = beta * (dudx + dvdy);
         }
     }
 }
 
 void PressureSolver::solvePoisson() {
-    std::fill(p.begin(), p.end(), 0.0f);
+    // Keep previous p as warm start for faster convergence.
     std::fill(pNext.begin(), pNext.end(), 0.0f);
 
     const float dx2 = dx * dx;
     const float dy2 = dy * dy;
-    const float invDenom = 1.0f / (2.0f * (1.0f / dx2 + 1.0f / dy2));
+    const float alpha = (meanDepth * meanDepth) / 3.0f;
+    const float invDx2 = 1.0f / dx2;
+    const float invDy2 = 1.0f / dy2;
+    const float centerCoeff = 1.0f + 2.0f * alpha * (invDx2 + invDy2);
 
     for (int it = 0; it < maxIterations; ++it) {
         float maxChange = 0.0f;
@@ -91,20 +98,12 @@ void PressureSolver::solvePoisson() {
                 const float pN = p[idxCell((i + 1 < N) ? (i + 1) : i, j)];
 
                 const float numer =
-                    (pW + pE) / dx2 +
-                    (pS + pN) / dy2 -
-                    rhs[id];
-                pNext[id] = numer * invDenom;
+                    rhs[id] +
+                    alpha * ((pW + pE) * invDx2 + (pS + pN) * invDy2);
+                pNext[id] = numer / centerCoeff;
 
                 maxChange = std::max(maxChange, std::fabs(pNext[id] - p[id]));
             }
-        }
-
-        // Fix gauge freedom of Neumann problem: enforce zero-mean pressure.
-        const float meanP =
-            std::accumulate(pNext.begin(), pNext.end(), 0.0f) / static_cast<float>(N * N);
-        for (float& v : pNext) {
-            v -= meanP;
         }
 
         p.swap(pNext);
@@ -119,7 +118,7 @@ void PressureSolver::applyPressureGradient(
     std::vector<float>& vField,
     float dt
 ) const {
-    const float scale = dt / rho;
+    const float scale = dt / (rho * meanDepth);
 
     // u lives on vertical faces: j = 0..N
     for (int i = 0; i < N; ++i) {

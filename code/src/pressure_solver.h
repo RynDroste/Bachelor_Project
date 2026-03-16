@@ -8,6 +8,7 @@ public:
 
     void setDensity(float rhoValue);
     void setMeanDepth(float depthValue);
+    void setNonHydrostaticStrength(float strengthValue);
     void setIterations(int maxIters);
     void setTolerance(float eps);
 
@@ -41,6 +42,7 @@ private:
     float dy;
     float rho;
     float meanDepth;
+    float nhStrength;
     int maxIterations;
     float tolerance;
 

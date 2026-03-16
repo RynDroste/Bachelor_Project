@@ -9,6 +9,7 @@ PressureSolver::PressureSolver(int resolution, float dx, float dy)
       dy(dy),
       rho(1.0f),
       meanDepth(1.0f),
+      nhStrength(1.0f),
       maxIterations(60),
       tolerance(1e-5f),
       rhs(N * N, 0.0f),
@@ -21,6 +22,10 @@ void PressureSolver::setDensity(float rhoValue) {
 
 void PressureSolver::setMeanDepth(float depthValue) {
     meanDepth = std::max(depthValue, 1e-4f);
+}
+
+void PressureSolver::setNonHydrostaticStrength(float strengthValue) {
+    nhStrength = std::clamp(strengthValue, 0.0f, 1.0f);
 }
 
 void PressureSolver::setIterations(int maxIters) {
@@ -118,7 +123,7 @@ void PressureSolver::applyPressureGradient(
     std::vector<float>& vField,
     float dt
 ) const {
-    const float scale = dt / (rho * meanDepth);
+    const float scale = (dt / (rho * meanDepth)) * nhStrength;
 
     // u lives on vertical faces: j = 0..N
     for (int i = 0; i < N; ++i) {

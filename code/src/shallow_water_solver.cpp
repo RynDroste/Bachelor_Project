@@ -13,11 +13,11 @@ ShallowWaterSolver::ShallowWaterSolver(int gridSize)
       H(1.0f),
       g(9.81f),
       f(0.1f),
-      linearDrag(0.2f),
+      linearDrag(0.05f),
       cflLimit(0.45f),
-      shapiroStrength(0.04f),
-      energyThreshold(5e-4f),
-      lowEnergyStepsRequired(180),
+      shapiroStrength(0.01f),
+      energyThreshold(5e-6f),
+      lowEnergyStepsRequired(600),
       dt(0.0f),
       etaCurr(N * N, 0.0f),
       etaNext(N * N, 0.0f),
@@ -33,6 +33,8 @@ ShallowWaterSolver::ShallowWaterSolver(int gridSize)
       vRhs((N + 1) * N, 0.0f),
       pressureSolver(N, dx, dy),
       enablePressureProjection(false),
+      stepCount(0),
+      diagnosticsInterval(30),
       accumulator(0.0f),
       lowEnergySteps(0),
       simulationActive(true) {
@@ -54,8 +56,9 @@ ShallowWaterSolver::ShallowWaterSolver(int gridSize)
     updateTimeStepFromCfl();
     pressureSolver.setDensity(1.0f);
     pressureSolver.setMeanDepth(H);
-    pressureSolver.setIterations(40);
-    pressureSolver.setTolerance(1e-5f);
+    pressureSolver.setNonHydrostaticStrength(0.05f);
+    pressureSolver.setIterations(80);
+    pressureSolver.setTolerance(1e-6f);
 }
 
 void ShallowWaterSolver::advance(float frameDt) {
@@ -164,6 +167,21 @@ void ShallowWaterSolver::step() {
     }
 
     const float totalEnergy = (kineticEnergy + potentialEnergy) * dx * dy;
+    float maxAbsEta = 0.0f;
+    for (float v : etaCurr) {
+        maxAbsEta = std::max(maxAbsEta, std::fabs(v));
+    }
+    const float maxAbsDiv = computeMaxAbsDivergence(uCurr, vCurr);
+    ++stepCount;
+    if (stepCount % diagnosticsInterval == 0) {
+        std::cout << "[diag] step=" << stepCount
+                  << " dt=" << dt
+                  << " max|eta|=" << maxAbsEta
+                  << " E=" << totalEnergy
+                  << " max|div|=" << maxAbsDiv
+                  << '\n';
+    }
+
     if (totalEnergy < energyThreshold) {
         ++lowEnergySteps;
         if (lowEnergySteps >= lowEnergyStepsRequired) {
@@ -173,6 +191,21 @@ void ShallowWaterSolver::step() {
     } else {
         lowEnergySteps = 0;
     }
+}
+
+float ShallowWaterSolver::computeMaxAbsDivergence(
+    const std::vector<float>& uField,
+    const std::vector<float>& vField
+) const {
+    float maxAbsDiv = 0.0f;
+    for (int i = 0; i < N; ++i) {
+        for (int j = 0; j < N; ++j) {
+            const float dudx = (uField[idxU(i, j + 1)] - uField[idxU(i, j)]) / dx;
+            const float dvdy = (vField[idxV(i + 1, j)] - vField[idxV(i, j)]) / dy;
+            maxAbsDiv = std::max(maxAbsDiv, std::fabs(dudx + dvdy));
+        }
+    }
+    return maxAbsDiv;
 }
 
 void ShallowWaterSolver::updateTimeStepFromCfl() {

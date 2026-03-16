@@ -33,7 +33,7 @@ ShallowWaterSolver::ShallowWaterSolver(int gridSize)
       vStage((N + 1) * N, 0.0f),
       vRhs((N + 1) * N, 0.0f),
       pressureSolver(N, dx, dy),
-      enablePressureProjection(false),
+      enablePressureProjection(true),
       accumulator(0.0f),
       lowEnergySteps(0),
       simulationActive(true) {

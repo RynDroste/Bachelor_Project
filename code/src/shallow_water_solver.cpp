@@ -55,6 +55,7 @@ ShallowWaterSolver::ShallowWaterSolver(int gridSize)
     updateTimeStepFromCfl();
     pressureSolver.setDensity(1.0f);
     pressureSolver.setMeanDepth(H);
+    pressureSolver.setGravity(g);
     pressureSolver.setNonHydrostaticStrength(0.05f);
     pressureSolver.setIterations(80);
     pressureSolver.setTolerance(1e-6f);
@@ -136,7 +137,7 @@ void ShallowWaterSolver::step() {
     }
     enforceVelocityBoundaries(uNext, vNext);
     if (enablePressureProjection) {
-        pressureSolver.project(uNext, vNext, dt);
+        pressureSolver.project(etaNext, uNext, vNext, dt);
     }
 
     etaCurr.swap(etaNext);

@@ -46,6 +46,7 @@ private:
     void updateTimeStepFromCfl();
     void applyShapiroFilter(std::vector<float>& etaField) const;
     float injectionSourceAtCell(int i, int j) const;
+    void clampEtaToBathymetry(std::vector<float>& etaField) const;
 
     int N;
     float dx;

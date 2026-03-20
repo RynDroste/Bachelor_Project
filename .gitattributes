@@ -1,6 +1,1 @@
-## Keep language stats focused on project code.
-code/external/** linguist-vendored
-*.asc linguist-detectable=false
-*.prj linguist-detectable=false
-*.aux.xml linguist-detectable=false
-*.tif linguist-detectable=false
+*.asc linguist-language=text

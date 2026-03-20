@@ -128,11 +128,8 @@ void ShallowWaterSolver::injectEtaPulse(int centerI, int centerJ, float amplitud
 
     clampEtaToBathymetry(etaCurr);
     etaNext = etaCurr;
-    etaStage = etaCurr;
     uNext = uCurr;
-    uStage = uCurr;
     vNext = vCurr;
-    vStage = vCurr;
     lowEnergySteps = 0;
     simulationActive = true;
 }

@@ -1,2 +1,4 @@
 code/build/
 .DS_Store
+ags_scripts/
+**/ags_scripts/

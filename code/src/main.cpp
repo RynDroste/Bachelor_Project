@@ -1,9 +1,11 @@
 #define GL_SILENCE_DEPRECATION
 #define GLFW_INCLUDE_NONE
 
+#include <array>
+#include <cmath>
 #include <iostream>
-#include <string>
 #include <stdexcept>
+#include <string>
 #include <vector>
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -34,7 +36,7 @@ const GLchar* fragmentShaderSource = "#version 330 core\n"
     "color = vec4(0.0f, 0.0f, 1.0f, 1.0f);\n"
     "}\n\0";  //ShaderSource in GLSL
 
-int main() {
+int main(int argc, char** argv) {
     if (!glfwInit()) {
         return 1;
     }
@@ -95,7 +97,65 @@ int main() {
     glDeleteShader(vertexShader);
     glDeleteShader(fragmentShader);
 
-    const int  gridSize = 128;
+    const int gridSize = 128;
+    const int expectedResolution = gridSize + 1;
+    const std::array<std::string, 3> defaultDemCandidates = {
+        "src/dem_129_utm.asc",
+        "../src/dem_129_utm.asc",
+        "dem_129_utm.asc"
+    };
+
+    DemData dem;
+    bool demLoaded = false;
+    try {
+        if (argc > 1) {
+            dem = loadDemFromFile(argv[1]);
+            demLoaded = true;
+        } else {
+            for (const std::string& candidate : defaultDemCandidates) {
+                try {
+                    dem = loadDemFromFile(candidate);
+                    demLoaded = true;
+                    break;
+                } catch (const std::exception&) {
+                    // Try next candidate.
+                }
+            }
+        }
+    } catch (const std::exception&) {
+    }
+
+    if (!demLoaded) {
+        glfwDestroyWindow(window);
+        glfwTerminate();
+        return 1;
+    }
+
+    if (dem.width != expectedResolution || dem.height != expectedResolution) {
+        glfwDestroyWindow(window);
+        glfwTerminate();
+        return 1;
+    }
+
+    const float dxMeters = static_cast<float>(std::fabs(dem.pixelSizeX));
+    const float dyMeters = static_cast<float>(std::fabs(dem.pixelSizeY));
+    const float domainWidthMeters = dxMeters * static_cast<float>(gridSize);
+    const float domainHeightMeters = dyMeters * static_cast<float>(gridSize);
+    const float maxDomainMeters = std::max(domainWidthMeters, domainHeightMeters);
+    if (maxDomainMeters <= 1e-6f) {
+        glfwDestroyWindow(window);
+        glfwTerminate();
+        return 1;
+    }
+
+    // Non-dimensionalize coordinates to keep a stable simulation scale while preserving aspect ratio.
+    // We map the larger physical domain extent to 2 model units (roughly the previous [-1, 1] range).
+    const float modelUnitsPerMeter = 2.0f / maxDomainMeters;
+    const float dxModel = dxMeters * modelUnitsPerMeter;
+    const float dyModel = dyMeters * modelUnitsPerMeter;
+    const float domainWidthModel = domainWidthMeters * modelUnitsPerMeter;
+    const float domainHeightModel = domainHeightMeters * modelUnitsPerMeter;
+
     std::vector<float> vertices;
     std::vector<unsigned int> indices;
     vertices.reserve((gridSize + 1) * (gridSize + 1) * 3);
@@ -103,8 +163,8 @@ int main() {
 
     for (int i = 0; i <= gridSize; i++) {
         for (int j = 0; j <= gridSize; j++) {
-            float x = static_cast<float>(j) / static_cast<float>(gridSize) * 2.0f - 1.0f;
-            float z = static_cast<float>(i) / static_cast<float>(gridSize) * 2.0f - 1.0f;
+            const float x = (static_cast<float>(j) / static_cast<float>(gridSize) - 0.5f) * domainWidthModel;
+            const float z = (static_cast<float>(i) / static_cast<float>(gridSize) - 0.5f) * domainHeightModel;
             float y = 0.0f; 
             
             vertices.push_back(x);
@@ -130,29 +190,7 @@ int main() {
         }
     }
 
-    const float defaultDx = 2.0f / static_cast<float>(gridSize);
-    const float defaultDy = defaultDx;
-    float solverDx = defaultDx;
-    float solverDy = defaultDy;
-    const std::string demPath = "src/dem_129_utm.asc";
-
-    try {
-        const DemInfo demInfo = loadDemInfo(demPath);
-        if (demInfo.width == gridSize + 1 && demInfo.height == gridSize + 1) {
-            solverDx = demInfo.dx;
-            solverDy = demInfo.dy;
-            std::cout << "Loaded DEM geotransform from " << demPath
-                      << " (dx=" << solverDx << ", dy=" << solverDy << ")\n";
-        } else {
-            std::cout << "DEM grid size mismatch (" << demInfo.width << "x" << demInfo.height
-                      << "), expected " << (gridSize + 1) << "x" << (gridSize + 1)
-                      << ". Falling back to default spacing.\n";
-        }
-    } catch (const std::exception& e) {
-        std::cout << "DEM load skipped: " << e.what() << '\n';
-    }
-
-    ShallowWaterSolver solver(gridSize, solverDx, solverDy);
+    ShallowWaterSolver solver(gridSize, dxModel, dyModel);
     const int N = solver.resolution();
 
     float lastTime = static_cast<float>(glfwGetTime());

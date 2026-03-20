@@ -78,11 +78,5 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     ${GLFW_TARGET}
     ${GLM_TARGET}
     OpenGL::GL
+    GDAL::GDAL
 )
-
-if(TARGET GDAL::GDAL)
-    target_link_libraries(${PROJECT_NAME} PRIVATE GDAL::GDAL)
-else()
-    target_include_directories(${PROJECT_NAME} PRIVATE ${GDAL_INCLUDE_DIRS})
-    target_link_libraries(${PROJECT_NAME} PRIVATE ${GDAL_LIBRARIES})
-endif()

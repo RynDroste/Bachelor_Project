@@ -20,13 +20,14 @@ ShallowWaterSolver::ShallowWaterSolver(int gridSize, float dxMeters, float dyMet
       f(0.1f),
       linearDrag(0.05f),
       cflLimit(0.45f),
-      shapiroStrength(0.0f),
+      shapiroStrength(0.02f),
       spongeWidthCells(10),
       spongeMaxSigma(0.0f),
       energyThreshold(5e-6f),
       lowEnergyStepsRequired(600),
       dt(0.0f),
       dryDepthThreshold(5e-3f),
+      stillWaterLevel(0.03f),
       etaCurr(N * N, 0.0f),
       etaNext(N * N, 0.0f),
       etaStage(N * N, 0.0f),
@@ -83,6 +84,62 @@ void ShallowWaterSolver::advance(float frameDt) {
     }
 }
 
+void ShallowWaterSolver::injectEtaPulse(int centerI, int centerJ, float amplitude, float sigmaCells) {
+    if (N <= 0 || sigmaCells <= 0.0f || amplitude == 0.0f) {
+        return;
+    }
+    centerI = std::clamp(centerI, 0, N - 1);
+    centerJ = std::clamp(centerJ, 0, N - 1);
+    const float twoSigma2 = 2.0f * sigmaCells * sigmaCells;
+
+    for (int i = 0; i < N; ++i) {
+        for (int j = 0; j < N; ++j) {
+            const float di = static_cast<float>(i - centerI);
+            const float dj = static_cast<float>(j - centerJ);
+            const float r2 = di * di + dj * dj;
+            etaCurr[idxEta(i, j)] += amplitude * std::exp(-r2 / twoSigma2);
+        }
+    }
+
+    // Reconcile momentum with the injected free-surface jump:
+    // damp velocities near the pulse to avoid one-step spurious advection/noise.
+    const float velSigma = std::max(1.0f, sigmaCells);
+    const float twoVelSigma2 = 2.0f * velSigma * velSigma;
+
+    for (int i = 0; i < N; ++i) {
+        for (int jFace = 0; jFace <= N; ++jFace) {
+            const float di = static_cast<float>(i - centerI);
+            const float dj = (static_cast<float>(jFace) - 0.5f) - static_cast<float>(centerJ);
+            const float r2 = di * di + dj * dj;
+            const float weight = std::exp(-r2 / twoVelSigma2);
+            const float damping = 1.0f - weight;
+            const int id = idxU(i, jFace);
+            uCurr[id] *= damping;
+        }
+    }
+    for (int iFace = 0; iFace <= N; ++iFace) {
+        for (int j = 0; j < N; ++j) {
+            const float di = (static_cast<float>(iFace) - 0.5f) - static_cast<float>(centerI);
+            const float dj = static_cast<float>(j - centerJ);
+            const float r2 = di * di + dj * dj;
+            const float weight = std::exp(-r2 / twoVelSigma2);
+            const float damping = 1.0f - weight;
+            const int id = idxV(iFace, j);
+            vCurr[id] *= damping;
+        }
+    }
+
+    clampEtaToBathymetry(etaCurr);
+    etaNext = etaCurr;
+    etaStage = etaCurr;
+    uNext = uCurr;
+    uStage = uCurr;
+    vNext = vCurr;
+    vStage = vCurr;
+    lowEnergySteps = 0;
+    simulationActive = true;
+}
+
 float ShallowWaterSolver::etaAt(int i, int j) const {
     return etaCurr[idxEta(i, j)];
 }
@@ -103,7 +160,12 @@ int ShallowWaterSolver::idxV(int iFace, int j) const {
     return iFace * N + j;
 }
 
-float ShallowWaterSolver::localDepth(const std::vector<float>& etaField, int i, int j) const {
+float ShallowWaterSolver::trueDepth(const std::vector<float>& etaField, int i, int j) const {
+    const float h = etaField[idxEta(i, j)] - bathymetry[idxEta(i, j)];
+    return std::max(h, 0.0f);
+}
+
+float ShallowWaterSolver::physicalDepth(const std::vector<float>& etaField, int i, int j) const {
     const float h = etaField[idxEta(i, j)] - bathymetry[idxEta(i, j)];
     return std::max(h, dryDepthThreshold);
 }
@@ -190,24 +252,16 @@ void ShallowWaterSolver::clampEtaToBathymetry(std::vector<float>& etaField) cons
     }
 }
 
+void ShallowWaterSolver::clampEtaSoft(std::vector<float>& etaField, float tolerance) const {
+    const float tol = std::max(tolerance, 0.0f);
+    for (int i = 0; i < N * N; ++i) {
+        etaField[i] = std::max(etaField[i], bathymetry[i] - tol);
+    }
+}
+
 void ShallowWaterSolver::initializeFreeSurfaceFromBathymetry() {
-    etaCurr = bathymetry;
-    etaNext = bathymetry;
-    etaStage = bathymetry;
-
-    const float etaAmplitude = 0.04f;
-    const float sigmaCells = 6.0f;
-    const float twoSigma2 = 2.0f * sigmaCells * sigmaCells;
-    const int centerI = N / 2;
-    const int centerJ = N / 2;
-
-    for (int i = 0; i < N; ++i) {
-        for (int j = 0; j < N; ++j) {
-            const float di = static_cast<float>(i - centerI);
-            const float dj = static_cast<float>(j - centerJ);
-            const float r2 = di * di + dj * dj;
-            etaCurr[idxEta(i, j)] += etaAmplitude * std::exp(-r2 / twoSigma2);
-        }
+    for (int i = 0; i < N * N; ++i) {
+        etaCurr[i] = std::max(bathymetry[i], stillWaterLevel);
     }
     etaNext = etaCurr;
     etaStage = etaCurr;
@@ -221,7 +275,7 @@ void ShallowWaterSolver::step() {
     for (int i = 0; i < N * N; ++i) {
         etaStage[i] = etaCurr[i] + dt * etaRhs[i];
     }
-    clampEtaToBathymetry(etaStage);
+    clampEtaSoft(etaStage, dryDepthThreshold);
     for (int i = 0; i < N * (N + 1); ++i) {
         uStage[i] = uCurr[i] + dt * uRhs[i];
     }
@@ -233,9 +287,10 @@ void ShallowWaterSolver::step() {
     // SSP-RK3 stage 2
     computeRhs(etaStage, uStage, vStage, etaRhs, uRhs, vRhs);
     for (int i = 0; i < N * N; ++i) {
-        etaStage[i] = 0.75f * etaCurr[i] + 0.25f * (etaStage[i] + dt * etaRhs[i]);
+        const float etaStageNonNegative = std::max(etaStage[i], bathymetry[i]);
+        etaStage[i] = 0.75f * etaCurr[i] + 0.25f * (etaStageNonNegative + dt * etaRhs[i]);
     }
-    clampEtaToBathymetry(etaStage);
+    clampEtaSoft(etaStage, dryDepthThreshold);
     for (int i = 0; i < N * (N + 1); ++i) {
         uStage[i] = 0.75f * uCurr[i] + 0.25f * (uStage[i] + dt * uRhs[i]);
     }
@@ -247,7 +302,8 @@ void ShallowWaterSolver::step() {
     // SSP-RK3 stage 3
     computeRhs(etaStage, uStage, vStage, etaRhs, uRhs, vRhs);
     for (int i = 0; i < N * N; ++i) {
-        etaNext[i] = (1.0f / 3.0f) * etaCurr[i] + (2.0f / 3.0f) * (etaStage[i] + dt * etaRhs[i]);
+        const float etaStageNonNegative = std::max(etaStage[i], bathymetry[i]);
+        etaNext[i] = (1.0f / 3.0f) * etaCurr[i] + (2.0f / 3.0f) * (etaStageNonNegative + dt * etaRhs[i]);
     }
     clampEtaToBathymetry(etaNext);
     for (int i = 0; i < N * (N + 1); ++i) {
@@ -264,26 +320,55 @@ void ShallowWaterSolver::step() {
     applyBoundarySponge(etaCurr, uCurr, vCurr, dt);
     clampEtaToBathymetry(etaCurr);
 
+    float totalMass = 0.0f;
+    for (int i = 0; i < N; ++i) {
+        for (int j = 0; j < N; ++j) {
+            totalMass += trueDepth(etaCurr, i, j);
+        }
+    }
+    totalMass *= dx * dy;
+    if (!std::isfinite(totalMass)) {
+        std::cout << "Mass = NaN/Inf (numerical instability detected)\n";
+    } else {
+        std::cout << "Mass = " << totalMass << '\n';
+    }
+
     float kineticEnergy = 0.0f;
     float potentialEnergy = 0.0f;
     for (int i = 0; i < N; ++i) {
         for (int j = 1; j < N; ++j) {
             const float uVal = uCurr[idxU(i, j)];
-            const float hFace = 0.5f * (localDepth(etaCurr, i, j - 1) + localDepth(etaCurr, i, j));
+            const float hL = trueDepth(etaCurr, i, j - 1);
+            const float hR = trueDepth(etaCurr, i, j);
+            if (hL < dryDepthThreshold && hR < dryDepthThreshold) {
+                continue;
+            }
+            const float hFace = 0.5f * (hL + hR);
             kineticEnergy += 0.5f * hFace * uVal * uVal;
         }
     }
     for (int i = 1; i < N; ++i) {
         for (int j = 0; j < N; ++j) {
             const float vVal = vCurr[idxV(i, j)];
-            const float hFace = 0.5f * (localDepth(etaCurr, i - 1, j) + localDepth(etaCurr, i, j));
+            const float hD = trueDepth(etaCurr, i - 1, j);
+            const float hU = trueDepth(etaCurr, i, j);
+            if (hD < dryDepthThreshold && hU < dryDepthThreshold) {
+                continue;
+            }
+            const float hFace = 0.5f * (hD + hU);
             kineticEnergy += 0.5f * hFace * vVal * vVal;
         }
     }
     for (int i = 0; i < N; ++i) {
         for (int j = 0; j < N; ++j) {
-            const float hVal = localDepth(etaCurr, i, j);
-            potentialEnergy += 0.5f * g * hVal * hVal;
+            const float hVal = trueDepth(etaCurr, i, j);
+            if (hVal < dryDepthThreshold) {
+                continue;
+            }
+            const int id = idxEta(i, j);
+            const float etaRef = std::max(bathymetry[id], stillWaterLevel);
+            const float dEta = etaCurr[id] - etaRef;
+            potentialEnergy += 0.5f * g * dEta * dEta;
         }
     }
 
@@ -300,13 +385,13 @@ void ShallowWaterSolver::step() {
 }
 
 void ShallowWaterSolver::updateTimeStepFromCfl() {
-    float maxDepth = dryDepthThreshold;
+    float maxDepth = 0.0f;
     float maxAbsU = 0.0f;
     float maxAbsV = 0.0f;
 
     for (int i = 0; i < N; ++i) {
         for (int j = 0; j < N; ++j) {
-            maxDepth = std::max(maxDepth, localDepth(etaCurr, i, j));
+            maxDepth = std::max(maxDepth, trueDepth(etaCurr, i, j));
         }
     }
     for (int i = 0; i < N; ++i) {
@@ -338,13 +423,31 @@ void ShallowWaterSolver::applyShapiroFilter(std::vector<float>& etaField) const 
     for (int i = 1; i < N - 1; ++i) {
         for (int j = 1; j < N - 1; ++j) {
             const int c = idxEta(i, j);
-            const float lap =
-                etaField[idxEta(i + 1, j)] +
-                etaField[idxEta(i - 1, j)] +
-                etaField[idxEta(i, j + 1)] +
-                etaField[idxEta(i, j - 1)] -
-                4.0f * etaField[c];
-            filtered[c] = etaField[c] + shapiroStrength * lap;
+            const float hCenter = trueDepth(etaField, i, j);
+            if (hCenter < dryDepthThreshold) {
+                filtered[c] = etaField[c];
+                continue;
+            }
+
+            const int n = idxEta(i + 1, j);
+            const int s = idxEta(i - 1, j);
+            const int e = idxEta(i, j + 1);
+            const int w = idxEta(i, j - 1);
+
+            const float etaRefC = std::max(bathymetry[c], stillWaterLevel);
+            const float etaRefN = std::max(bathymetry[n], stillWaterLevel);
+            const float etaRefS = std::max(bathymetry[s], stillWaterLevel);
+            const float etaRefE = std::max(bathymetry[e], stillWaterLevel);
+            const float etaRefW = std::max(bathymetry[w], stillWaterLevel);
+
+            const float pertC = etaField[c] - etaRefC;
+            const float pertN = etaField[n] - etaRefN;
+            const float pertS = etaField[s] - etaRefS;
+            const float pertE = etaField[e] - etaRefE;
+            const float pertW = etaField[w] - etaRefW;
+
+            const float lapPert = pertN + pertS + pertE + pertW - 4.0f * pertC;
+            filtered[c] = etaField[c] + shapiroStrength * lapPert;
         }
     }
     etaField.swap(filtered);
@@ -381,7 +484,9 @@ void ShallowWaterSolver::applyBoundarySponge(
             const float sigma = spongeSigma(d);
             if (sigma > 0.0f) {
                 const float damping = std::exp(-sigma * dtStep);
-                etaField[idxEta(i, j)] *= damping;
+                const int id = idxEta(i, j);
+                const float etaRef = std::max(bathymetry[id], stillWaterLevel);
+                etaField[id] = etaRef + (etaField[id] - etaRef) * damping;
             }
         }
     }
@@ -426,17 +531,6 @@ void ShallowWaterSolver::computeRhs(
     for (int i = 0; i < N; ++i) {
         for (int j = 0; j < N; ++j) {
             const int idEta = idxEta(i, j);
-            const float xEta = static_cast<float>(j);
-            const float yEta = static_cast<float>(i);
-
-            const float uAtEta = sampleU(uField, xEta, yEta);
-            const float vAtEta = sampleV(vField, xEta, yEta);
-
-            const float backX = std::clamp(xEta - (dt / dx) * uAtEta, 0.0f, static_cast<float>(N - 1));
-            const float backY = std::clamp(yEta - (dt / dy) * vAtEta, 0.0f, static_cast<float>(N - 1));
-            const float etaDepart = sampleEta(etaField, backX, backY);
-            const float advEta = (etaDepart - etaField[idEta]) / dt;
-
             const float hW = reconstructedDepthAtUFace(etaField, i, j);
             const float hE = reconstructedDepthAtUFace(etaField, i, j + 1);
             const float hS = reconstructedDepthAtVFace(etaField, i, j);
@@ -444,7 +538,7 @@ void ShallowWaterSolver::computeRhs(
             const float fluxDiv =
                 (hE * uField[idxU(i, j + 1)] - hW * uField[idxU(i, j)]) / dx +
                 (hN * vField[idxV(i + 1, j)] - hS * vField[idxV(i, j)]) / dy;
-            etaRhsOut[idEta] = advEta - fluxDiv;
+            etaRhsOut[idEta] = -fluxDiv;
         }
     }
 
@@ -457,10 +551,10 @@ void ShallowWaterSolver::computeRhs(
             }
 
             const float hFace = reconstructedDepthAtUFace(etaField, i, j);
-            const float hLeft = localDepth(etaField, i, j - 1);
-            const float hRight = localDepth(etaField, i, j);
+            const float hLeft = trueDepth(etaField, i, j - 1);
+            const float hRight = trueDepth(etaField, i, j);
             // Allow wetting front propagation: only block a face if both sides are essentially dry.
-            if (hFace <= dryDepthThreshold && std::max(hLeft, hRight) <= dryDepthThreshold) {
+            if (hLeft < dryDepthThreshold && hRight < dryDepthThreshold) {
                 uRhsOut[idU] = -uField[idU] / std::max(dt, 1e-6f);
                 continue;
             }
@@ -469,14 +563,20 @@ void ShallowWaterSolver::computeRhs(
             const float yU = static_cast<float>(i);
             const float uAtU = sampleU(uField, xU, yU);
             const float vAtU = sampleV(vField, xU, yU);
-
-            const float backX = std::clamp(xU - (dt / dx) * uAtU, -0.5f, static_cast<float>(N) - 0.5f);
-            const float backY = std::clamp(yU - (dt / dy) * vAtU, 0.0f, static_cast<float>(N - 1));
-            const float uDepart = sampleU(uField, backX, backY);
-            const float advU = (uDepart - uField[idU]) / dt;
+            const float duDx = (uAtU >= 0.0f)
+                                   ? (uField[idxU(i, j)] - uField[idxU(i, j - 1)]) / dx
+                                   : (uField[idxU(i, j + 1)] - uField[idxU(i, j)]) / dx;
+            const int iPrev = std::max(i - 1, 0);
+            const int iNext = std::min(i + 1, N - 1);
+            const float duDy = (vAtU >= 0.0f)
+                                   ? (uField[idxU(i, j)] - uField[idxU(iPrev, j)]) / dy
+                                   : (uField[idxU(iNext, j)] - uField[idxU(i, j)]) / dy;
+            const float advU = -(uAtU * duDx + vAtU * duDy);
 
             const float etaDxRec = reconstructedEtaGradientAtUFace(etaField, i, j);
-            const float source = -g * etaDxRec + f * vAtU - linearDrag * uField[idU];
+            const float dragEff =
+                (hFace > dryDepthThreshold) ? linearDrag : (1.0f / std::max(dt, 1e-6f));
+            const float source = -g * etaDxRec + f * vAtU - dragEff * uField[idU];
             uRhsOut[idU] = advU + source;
         }
     }
@@ -490,10 +590,10 @@ void ShallowWaterSolver::computeRhs(
             }
 
             const float hFace = reconstructedDepthAtVFace(etaField, i, j);
-            const float hDown = localDepth(etaField, i - 1, j);
-            const float hUp = localDepth(etaField, i, j);
+            const float hDown = trueDepth(etaField, i - 1, j);
+            const float hUp = trueDepth(etaField, i, j);
             // Allow wetting front propagation: only block a face if both sides are essentially dry.
-            if (hFace <= dryDepthThreshold && std::max(hDown, hUp) <= dryDepthThreshold) {
+            if (hDown < dryDepthThreshold && hUp < dryDepthThreshold) {
                 vRhsOut[idV] = -vField[idV] / std::max(dt, 1e-6f);
                 continue;
             }
@@ -502,14 +602,20 @@ void ShallowWaterSolver::computeRhs(
             const float yV = static_cast<float>(i) - 0.5f;
             const float uAtV = sampleU(uField, xV, yV);
             const float vAtV = sampleV(vField, xV, yV);
-
-            const float backX = std::clamp(xV - (dt / dx) * uAtV, 0.0f, static_cast<float>(N - 1));
-            const float backY = std::clamp(yV - (dt / dy) * vAtV, -0.5f, static_cast<float>(N) - 0.5f);
-            const float vDepart = sampleV(vField, backX, backY);
-            const float advV = (vDepart - vField[idV]) / dt;
+            const int jPrev = std::max(j - 1, 0);
+            const int jNext = std::min(j + 1, N - 1);
+            const float dvDx = (uAtV >= 0.0f)
+                                   ? (vField[idxV(i, j)] - vField[idxV(i, jPrev)]) / dx
+                                   : (vField[idxV(i, jNext)] - vField[idxV(i, j)]) / dx;
+            const float dvDy = (vAtV >= 0.0f)
+                                   ? (vField[idxV(i, j)] - vField[idxV(i - 1, j)]) / dy
+                                   : (vField[idxV(i + 1, j)] - vField[idxV(i, j)]) / dy;
+            const float advV = -(uAtV * dvDx + vAtV * dvDy);
 
             const float etaDyRec = reconstructedEtaGradientAtVFace(etaField, i, j);
-            const float source = -g * etaDyRec - f * uAtV - linearDrag * vField[idV];
+            const float dragEff =
+                (hFace > dryDepthThreshold) ? linearDrag : (1.0f / std::max(dt, 1e-6f));
+            const float source = -g * etaDyRec - f * uAtV - dragEff * vField[idV];
             vRhsOut[idV] = advV + source;
         }
     }

@@ -7,6 +7,7 @@ public:
     explicit ShallowWaterSolver(int gridSize);
     ShallowWaterSolver(int gridSize, float dxMeters, float dyMeters);
     void setBathymetry(const std::vector<float>& bedElevation);
+    void injectEtaPulse(int centerI, int centerJ, float amplitude, float sigmaCells);
 
     void advance(float frameDt);
 
@@ -17,7 +18,8 @@ private:
     int idxEta(int i, int j) const;
     int idxU(int i, int jFace) const;
     int idxV(int iFace, int j) const;
-    float localDepth(const std::vector<float>& etaField, int i, int j) const;
+    float trueDepth(const std::vector<float>& etaField, int i, int j) const;
+    float physicalDepth(const std::vector<float>& etaField, int i, int j) const;
     float reconstructedDepthAtUFace(const std::vector<float>& etaField, int i, int jFace) const;
     float reconstructedDepthAtVFace(const std::vector<float>& etaField, int iFace, int j) const;
     float reconstructedEtaGradientAtUFace(const std::vector<float>& etaField, int i, int jFace) const;
@@ -47,6 +49,7 @@ private:
     void updateTimeStepFromCfl();
     void applyShapiroFilter(std::vector<float>& etaField) const;
     void clampEtaToBathymetry(std::vector<float>& etaField) const;
+    void clampEtaSoft(std::vector<float>& etaField, float tolerance) const;
     void initializeFreeSurfaceFromBathymetry();
 
     int N;
@@ -64,6 +67,7 @@ private:
     int lowEnergyStepsRequired;
     float dt;
     float dryDepthThreshold;
+    float stillWaterLevel;
 
     std::vector<float> etaCurr;
     std::vector<float> etaNext;

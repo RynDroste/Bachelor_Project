@@ -24,43 +24,6 @@ void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
     glViewport(0, 0, width, height);
 }
 
-DemData buildProceduralDem(int resolution) {
-    DemData dem;
-    dem.width = resolution;
-    dem.height = resolution;
-    dem.originX = 0.0;
-    dem.originY = 0.0;
-    dem.pixelSizeX = 1.0;
-    dem.pixelSizeY = 1.0;
-    dem.hasNoData = false;
-    dem.noDataValue = 0.0;
-    dem.elevation.resize(static_cast<size_t>(resolution) * static_cast<size_t>(resolution), 0.0f);
-
-    const float center = 0.5f * static_cast<float>(resolution - 1);
-    const float sigma = 0.18f * static_cast<float>(resolution);
-
-    for (int i = 0; i < resolution; ++i) {
-        for (int j = 0; j < resolution; ++j) {
-            const float x = static_cast<float>(j);
-            const float y = static_cast<float>(i);
-            const float dx = x - center;
-            const float dy = y - center;
-            const float r2 = dx * dx + dy * dy;
-
-            const float hill = 0.28f * std::exp(-r2 / (2.0f * sigma * sigma));
-            const float slope = 0.0020f * (x - center);
-            const float ripple =
-                0.03f * std::sin(2.0f * 3.14159265359f * x / static_cast<float>(resolution)) *
-                std::sin(2.0f * 3.14159265359f * y / static_cast<float>(resolution));
-
-            dem.elevation[static_cast<size_t>(i) * static_cast<size_t>(resolution) + static_cast<size_t>(j)] =
-                hill + slope + ripple;
-        }
-    }
-
-    return dem;
-}
-
 std::vector<float> buildTerrainOffset(const DemData& dem, float amplitude) {
     const size_t count = dem.elevation.size();
     std::vector<float> offset(count, 0.0f);
@@ -176,32 +139,38 @@ int main(int argc, char** argv) {
     };
 
     DemData dem;
-    bool demLoaded = false;
     try {
         if (argc > 1) {
             dem = loadDemFromFile(argv[1]);
-            demLoaded = true;
         } else {
+            bool loaded = false;
             for (const std::string& candidate : defaultDemCandidates) {
                 try {
                     dem = loadDemFromFile(candidate);
-                    demLoaded = true;
+                    loaded = true;
                     break;
                 } catch (const std::exception&) {
                     // Try next candidate.
                 }
             }
+            if (!loaded) {
+                throw std::runtime_error("No DEM file found. Provide a path as argv[1].");
+            }
         }
-    } catch (const std::exception&) {
-    }
-
-    if (!demLoaded) {
-        dem = buildProceduralDem(expectedResolution);
-        demLoaded = true;
+    } catch (const std::exception& ex) {
+        std::cerr << "Failed to load DEM: " << ex.what() << '\n';
+        glfwDestroyWindow(window);
+        glfwTerminate();
+        return 1;
     }
 
     if (dem.width != expectedResolution || dem.height != expectedResolution) {
-        dem = buildProceduralDem(expectedResolution);
+        std::cerr << "DEM resolution mismatch: expected "
+                  << expectedResolution << "x" << expectedResolution
+                  << ", got " << dem.width << "x" << dem.height << '\n';
+        glfwDestroyWindow(window);
+        glfwTerminate();
+        return 1;
     }
 
     const float dxMeters = static_cast<float>(std::fabs(dem.pixelSizeX));
@@ -277,6 +246,16 @@ int main(int argc, char** argv) {
     solver.setBathymetry(terrainOffset);
     const int N = solver.resolution();
     bool spaceWasPressed = false;
+    bool mousePulseWasPressed = false;
+    bool upWasPressed = false;
+    bool downWasPressed = false;
+    bool leftWasPressed = false;
+    bool rightWasPressed = false;
+    float pulseAmplitude = 0.03f;
+    float pulseSigmaCells = 4.0f;
+    const float wetDepthOn = 8.0e-3f;
+    const float wetDepthOff = 4.0e-3f;
+    const float waterSurfaceLift = 1.0e-4f;
 
     float lastTime = static_cast<float>(glfwGetTime());
     GLuint terrainVAO, terrainVBO, waterVAO, waterVBO, waterBodyVAO, waterBodyVBO, terrainEBO, waterEBO, waterBodyEBO;
@@ -325,6 +304,20 @@ int main(int argc, char** argv) {
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     
     while (!glfwWindowShouldClose(window)) {
+        int framebufferWidth = 800;
+        int framebufferHeight = 600;
+        glfwGetFramebufferSize(window, &framebufferWidth, &framebufferHeight);
+        const float aspect =
+            static_cast<float>(std::max(framebufferWidth, 1)) / static_cast<float>(std::max(framebufferHeight, 1));
+        const glm::mat4 model = glm::mat4(1.0f);
+        const glm::mat4 view = glm::lookAt(
+            glm::vec3(1.9f, 1.35f, 1.9f),
+            glm::vec3(0.0f, -0.05f, 0.0f),
+            glm::vec3(0.0f, 1.0f, 0.0f)
+        );
+        const glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.01f, 10.0f);
+        const glm::mat4 mvp = projection * view * model;
+
         if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
             glfwSetWindowShouldClose(window, true);
         }
@@ -333,6 +326,77 @@ int main(int argc, char** argv) {
             solver.setBathymetry(terrainOffset);
         }
         spaceWasPressed = spaceIsPressed;
+
+        const bool mousePulseIsPressed = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
+        if (mousePulseIsPressed && !mousePulseWasPressed) {
+            double cursorXWindow = 0.0;
+            double cursorYWindow = 0.0;
+            glfwGetCursorPos(window, &cursorXWindow, &cursorYWindow);
+            int windowWidth = 800;
+            int windowHeight = 600;
+            glfwGetWindowSize(window, &windowWidth, &windowHeight);
+            const float scaleX =
+                static_cast<float>(std::max(framebufferWidth, 1)) / static_cast<float>(std::max(windowWidth, 1));
+            const float scaleY =
+                static_cast<float>(std::max(framebufferHeight, 1)) / static_cast<float>(std::max(windowHeight, 1));
+            const float cursorXFb = static_cast<float>(cursorXWindow) * scaleX;
+            const float cursorYFb = static_cast<float>(cursorYWindow) * scaleY;
+
+            const glm::vec4 viewport(0.0f, 0.0f, static_cast<float>(framebufferWidth), static_cast<float>(framebufferHeight));
+            const glm::vec3 nearPoint = glm::unProject(
+                glm::vec3(cursorXFb, static_cast<float>(framebufferHeight) - cursorYFb, 0.0f),
+                view * model,
+                projection,
+                viewport
+            );
+            const glm::vec3 farPoint = glm::unProject(
+                glm::vec3(cursorXFb, static_cast<float>(framebufferHeight) - cursorYFb, 1.0f),
+                view * model,
+                projection,
+                viewport
+            );
+            const glm::vec3 ray = farPoint - nearPoint;
+            if (std::fabs(ray.y) > 1e-6f) {
+                const float t = -nearPoint.y / ray.y;
+                if (t > 0.0f) {
+                    const glm::vec3 hit = nearPoint + t * ray;
+                    const float xNorm = hit.x / domainWidthModel + 0.5f;
+                    const float zNorm = hit.z / domainHeightModel + 0.5f;
+                    const int j = std::clamp(static_cast<int>(std::lround(xNorm * static_cast<float>(gridSize))), 0, N - 1);
+                    const int i = std::clamp(static_cast<int>(std::lround(zNorm * static_cast<float>(gridSize))), 0, N - 1);
+                    solver.injectEtaPulse(i, j, pulseAmplitude, pulseSigmaCells);
+                }
+            }
+        }
+        mousePulseWasPressed = mousePulseIsPressed;
+
+        const bool upIsPressed = glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS;
+        if (upIsPressed && !upWasPressed) {
+            pulseAmplitude = std::min(pulseAmplitude + 0.005f, 0.20f);
+            std::cout << "Pulse amplitude: " << pulseAmplitude << ", sigma: " << pulseSigmaCells << '\n';
+        }
+        upWasPressed = upIsPressed;
+
+        const bool downIsPressed = glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS;
+        if (downIsPressed && !downWasPressed) {
+            pulseAmplitude = std::max(pulseAmplitude - 0.005f, 0.001f);
+            std::cout << "Pulse amplitude: " << pulseAmplitude << ", sigma: " << pulseSigmaCells << '\n';
+        }
+        downWasPressed = downIsPressed;
+
+        const bool leftIsPressed = glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS;
+        if (leftIsPressed && !leftWasPressed) {
+            pulseSigmaCells = std::max(pulseSigmaCells - 0.5f, 1.0f);
+            std::cout << "Pulse amplitude: " << pulseAmplitude << ", sigma: " << pulseSigmaCells << '\n';
+        }
+        leftWasPressed = leftIsPressed;
+
+        const bool rightIsPressed = glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS;
+        if (rightIsPressed && !rightWasPressed) {
+            pulseSigmaCells = std::min(pulseSigmaCells + 0.5f, 24.0f);
+            std::cout << "Pulse amplitude: " << pulseAmplitude << ", sigma: " << pulseSigmaCells << '\n';
+        }
+        rightWasPressed = rightIsPressed;
 
         float currentTime = static_cast<float>(glfwGetTime());
         float frameDt = currentTime - lastTime;
@@ -344,38 +408,14 @@ int main(int argc, char** argv) {
             for (int j = 0; j < N; ++j) {
                 int v = (i * N + j) * 3;
                 const float waterSurfaceY = solver.etaAt(i, j);
-                waterVertices[v + 1] = waterSurfaceY;
-            }
-        }
-
-        wetWaterIndices.clear();
-        const float wetDepthEps = 8.0e-3f;
-        for (size_t k = 0; k + 2 < indices.size(); k += 3) {
-            const unsigned int i0 = indices[k];
-            const unsigned int i1 = indices[k + 1];
-            const unsigned int i2 = indices[k + 2];
-
-            const float terrainY0 = terrainVertices[static_cast<size_t>(i0) * 3 + 1];
-            const float terrainY1 = terrainVertices[static_cast<size_t>(i1) * 3 + 1];
-            const float terrainY2 = terrainVertices[static_cast<size_t>(i2) * 3 + 1];
-
-            const float waterY0 = waterVertices[static_cast<size_t>(i0) * 3 + 1];
-            const float waterY1 = waterVertices[static_cast<size_t>(i1) * 3 + 1];
-            const float waterY2 = waterVertices[static_cast<size_t>(i2) * 3 + 1];
-
-            const bool wet0 = waterY0 > terrainY0 + wetDepthEps;
-            const bool wet1 = waterY1 > terrainY1 + wetDepthEps;
-            const bool wet2 = waterY2 > terrainY2 + wetDepthEps;
-            if (wet0 || wet1 || wet2) {
-                wetWaterIndices.push_back(i0);
-                wetWaterIndices.push_back(i1);
-                wetWaterIndices.push_back(i2);
+                waterVertices[v + 1] = waterSurfaceY + waterSurfaceLift;
             }
         }
 
         auto cellIndex = [gridSize](int i, int j) -> size_t {
             return static_cast<size_t>(i) * static_cast<size_t>(gridSize) + static_cast<size_t>(j);
         };
+
         for (int i = 0; i < gridSize; ++i) {
             for (int j = 0; j < gridSize; ++j) {
                 const int id00 = i * N + j;
@@ -386,8 +426,30 @@ int main(int argc, char** argv) {
                 const float d10 = waterVertices[static_cast<size_t>(id10) * 3 + 1] - terrainVertices[static_cast<size_t>(id10) * 3 + 1];
                 const float d01 = waterVertices[static_cast<size_t>(id01) * 3 + 1] - terrainVertices[static_cast<size_t>(id01) * 3 + 1];
                 const float d11 = waterVertices[static_cast<size_t>(id11) * 3 + 1] - terrainVertices[static_cast<size_t>(id11) * 3 + 1];
-                wetCellMask[cellIndex(i, j)] =
-                    (d00 > wetDepthEps || d10 > wetDepthEps || d01 > wetDepthEps || d11 > wetDepthEps) ? 1 : 0;
+                const float maxCellDepth = std::max(std::max(d00, d10), std::max(d01, d11));
+                const size_t cellId = cellIndex(i, j);
+                const bool wasWet = wetCellMask[cellId] != 0;
+                const bool isWet = wasWet ? (maxCellDepth > wetDepthOff) : (maxCellDepth > wetDepthOn);
+                wetCellMask[cellId] = isWet ? 1 : 0;
+            }
+        }
+
+        wetWaterIndices.clear();
+        for (int i = 0; i < gridSize; ++i) {
+            for (int j = 0; j < gridSize; ++j) {
+                if (!wetCellMask[cellIndex(i, j)]) {
+                    continue;
+                }
+                const unsigned int topLeft = static_cast<unsigned int>(i * (gridSize + 1) + j);
+                const unsigned int topRight = topLeft + 1;
+                const unsigned int bottomLeft = static_cast<unsigned int>((i + 1) * (gridSize + 1) + j);
+                const unsigned int bottomRight = bottomLeft + 1;
+                wetWaterIndices.push_back(topLeft);
+                wetWaterIndices.push_back(bottomLeft);
+                wetWaterIndices.push_back(topRight);
+                wetWaterIndices.push_back(topRight);
+                wetWaterIndices.push_back(bottomLeft);
+                wetWaterIndices.push_back(bottomRight);
             }
         }
 
@@ -482,21 +544,6 @@ int main(int argc, char** argv) {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         glUseProgram(shaderProgram);
-        int framebufferWidth = 800;
-        int framebufferHeight = 600;
-        glfwGetFramebufferSize(window, &framebufferWidth, &framebufferHeight);
-        const float aspect =
-            static_cast<float>(std::max(framebufferWidth, 1)) / static_cast<float>(std::max(framebufferHeight, 1));
-
-        // Oblique perspective camera similar to a 3/4 terrain overview.
-        const glm::mat4 model = glm::mat4(1.0f);
-        const glm::mat4 view = glm::lookAt(
-            glm::vec3(1.9f, 1.35f, 1.9f),
-            glm::vec3(0.0f, -0.05f, 0.0f),
-            glm::vec3(0.0f, 1.0f, 0.0f)
-        );
-        const glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.01f, 10.0f);
-        const glm::mat4 mvp = projection * view * model;
         glUniformMatrix4fv(mvpLocation, 1, GL_FALSE, glm::value_ptr(mvp));
 
         // Draw terrain in yellow.

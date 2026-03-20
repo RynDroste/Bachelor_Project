@@ -18,10 +18,7 @@ ShallowWaterSolver::ShallowWaterSolver(int gridSize, float dxMeters, float dyMet
       g(9.81f),
       linearDrag(0.05f),
       cflLimit(0.45f),
-      shapiroStrength(0.0f),
-      spongeWidthCells(10),
-      spongeMaxSigma(0.0f),
-      energyThreshold(5e-6f),
+      energyThreshold(5e-6f / std::max(1.0f, static_cast<float>(N * N))),
       lowEnergyStepsRequired(600),
       dt(0.0f),
       dryDepthThreshold(5e-3f),
@@ -66,6 +63,7 @@ void ShallowWaterSolver::setBathymetry(const std::vector<float>& bedElevation) {
     simulationTime = 0.0f;
     lowEnergySteps = 0;
     simulationActive = true;
+    updateTimeStepFromCfl();
 }
 
 void ShallowWaterSolver::advance(float frameDt) {
@@ -315,8 +313,6 @@ void ShallowWaterSolver::step() {
     etaCurr.swap(etaNext);
     uCurr.swap(uNext);
     vCurr.swap(vNext);
-    applyShapiroFilter(etaCurr);
-    applyBoundarySponge(etaCurr, uCurr, vCurr, dt);
     clampEtaToBathymetry(etaCurr);
 
     float kineticEnergy = 0.0f;
@@ -397,112 +393,6 @@ void ShallowWaterSolver::updateTimeStepFromCfl() {
     const float maxStableDt = cflLimit / denom;
     const float minDt = targetDt * 0.2f;
     dt = std::clamp(maxStableDt, minDt, targetDt);
-}
-
-void ShallowWaterSolver::applyShapiroFilter(std::vector<float>& etaField) const {
-    if (shapiroStrength <= 0.0f) {
-        return;
-    }
-
-    std::vector<float> filtered = etaField;
-    for (int i = 1; i < N - 1; ++i) {
-        for (int j = 1; j < N - 1; ++j) {
-            const int c = idxEta(i, j);
-            const float hCenter = trueDepth(etaField, i, j);
-            if (hCenter < dryDepthThreshold) {
-                filtered[c] = etaField[c];
-                continue;
-            }
-
-            const int n = idxEta(i + 1, j);
-            const int s = idxEta(i - 1, j);
-            const int e = idxEta(i, j + 1);
-            const int w = idxEta(i, j - 1);
-
-            const float etaRefC = std::max(bathymetry[c], stillWaterLevel);
-            const float etaRefN = std::max(bathymetry[n], stillWaterLevel);
-            const float etaRefS = std::max(bathymetry[s], stillWaterLevel);
-            const float etaRefE = std::max(bathymetry[e], stillWaterLevel);
-            const float etaRefW = std::max(bathymetry[w], stillWaterLevel);
-
-            const float pertC = etaField[c] - etaRefC;
-            const float pertN = etaField[n] - etaRefN;
-            const float pertS = etaField[s] - etaRefS;
-            const float pertE = etaField[e] - etaRefE;
-            const float pertW = etaField[w] - etaRefW;
-
-            const float lapPert = pertN + pertS + pertE + pertW - 4.0f * pertC;
-            filtered[c] = etaField[c] + shapiroStrength * lapPert;
-        }
-    }
-    etaField.swap(filtered);
-}
-
-float ShallowWaterSolver::spongeSigma(float distanceToBoundaryCells) const {
-    if (spongeWidthCells <= 0 || spongeMaxSigma <= 0.0f) {
-        return 0.0f;
-    }
-    if (distanceToBoundaryCells >= static_cast<float>(spongeWidthCells)) {
-        return 0.0f;
-    }
-    const float ramp =
-        (static_cast<float>(spongeWidthCells) - distanceToBoundaryCells) /
-        static_cast<float>(spongeWidthCells);
-    return spongeMaxSigma * ramp * ramp;
-}
-
-void ShallowWaterSolver::applyBoundarySponge(
-    std::vector<float>& etaField,
-    std::vector<float>& uField,
-    std::vector<float>& vField,
-    float dtStep
-) const {
-    if (dtStep <= 0.0f || spongeWidthCells <= 0 || spongeMaxSigma <= 0.0f) {
-        return;
-    }
-
-    for (int i = 0; i < N; ++i) {
-        for (int j = 0; j < N; ++j) {
-            const float d = static_cast<float>(
-                std::min(std::min(i, N - 1 - i), std::min(j, N - 1 - j))
-            );
-            const float sigma = spongeSigma(d);
-            if (sigma > 0.0f) {
-                const float damping = std::exp(-sigma * dtStep);
-                const int id = idxEta(i, j);
-                const float etaRef = std::max(bathymetry[id], stillWaterLevel);
-                etaField[id] = etaRef + (etaField[id] - etaRef) * damping;
-            }
-        }
-    }
-
-    for (int i = 0; i < N; ++i) {
-        for (int jFace = 0; jFace <= N; ++jFace) {
-            const float d = static_cast<float>(
-                std::min(std::min(i, N - 1 - i), std::min(jFace, N - jFace))
-            );
-            const float sigma = spongeSigma(d);
-            if (sigma > 0.0f) {
-                const float damping = std::exp(-sigma * dtStep);
-                uField[idxU(i, jFace)] *= damping;
-            }
-        }
-    }
-
-    for (int iFace = 0; iFace <= N; ++iFace) {
-        for (int j = 0; j < N; ++j) {
-            const float d = static_cast<float>(
-                std::min(std::min(iFace, N - iFace), std::min(j, N - 1 - j))
-            );
-            const float sigma = spongeSigma(d);
-            if (sigma > 0.0f) {
-                const float damping = std::exp(-sigma * dtStep);
-                vField[idxV(iFace, j)] *= damping;
-            }
-        }
-    }
-
-    enforceVelocityBoundaries(uField, vField);
 }
 
 void ShallowWaterSolver::computeRhs(

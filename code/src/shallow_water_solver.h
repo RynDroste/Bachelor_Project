@@ -39,15 +39,7 @@ private:
     float sampleU(const std::vector<float>& uField, float xEta, float yEta) const;
     float sampleV(const std::vector<float>& vField, float xEta, float yEta) const;
     float bilinearSample(const std::vector<float>& field, int rows, int cols, float rowCoord, float colCoord) const;
-    float spongeSigma(float distanceToBoundaryCells) const;
-    void applyBoundarySponge(
-        std::vector<float>& etaField,
-        std::vector<float>& uField,
-        std::vector<float>& vField,
-        float dtStep
-    ) const;
     void updateTimeStepFromCfl();
-    void applyShapiroFilter(std::vector<float>& etaField) const;
     void clampEtaToBathymetry(std::vector<float>& etaField) const;
     void clampEtaSoft(std::vector<float>& etaField, float tolerance) const;
     void initializeFreeSurfaceFromBathymetry();
@@ -59,9 +51,6 @@ private:
     float g;
     float linearDrag;
     float cflLimit;
-    float shapiroStrength;
-    int spongeWidthCells;
-    float spongeMaxSigma;
     float energyThreshold;
     int lowEnergyStepsRequired;
     float dt;

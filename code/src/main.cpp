@@ -36,36 +36,25 @@ DemData buildProceduralDem(int resolution) {
     dem.noDataValue = 0.0;
     dem.elevation.resize(static_cast<size_t>(resolution) * static_cast<size_t>(resolution), 0.0f);
 
+    const float center = 0.5f * static_cast<float>(resolution - 1);
+    const float sigma = 0.18f * static_cast<float>(resolution);
+
     for (int i = 0; i < resolution; ++i) {
         for (int j = 0; j < resolution; ++j) {
-            const float x = static_cast<float>(j) / static_cast<float>(resolution - 1);
-            const float y = static_cast<float>(i) / static_cast<float>(resolution - 1);
+            const float x = static_cast<float>(j);
+            const float y = static_cast<float>(i);
+            const float dx = x - center;
+            const float dy = y - center;
+            const float r2 = dx * dx + dy * dy;
 
-            // Background trend: higher terrain in the upper part, lower terrain in the lower part.
-            const float upperPlateau = 0.58f * y;
-            const float baseSlope = -0.22f * x + 0.04f * y;
-
-            // Carve a broad transition valley between upper and lower regions.
-            const float channelCenter =
-                0.48f +
-                0.05f * std::sin(2.0f * 3.14159265359f * (x + 0.08f)) -
-                0.03f * std::sin(4.0f * 3.14159265359f * (x - 0.18f));
-            const float valleyDist = (y - channelCenter) / 0.06f;
-            const float valley = -0.28f * std::exp(-valleyDist * valleyDist);
-
-            // Add roughness to mimic DEM-like ridges/erosion patterns.
-            const float ridge1 = 0.06f * std::sin(9.0f * x + 3.0f * y);
-            const float ridge2 = 0.04f * std::sin(18.0f * x - 11.0f * y);
-            const float ridge3 = 0.02f * std::cos(32.0f * x + 21.0f * y);
-            const float roughness = ridge1 + ridge2 + ridge3;
-
-            // Small local mound on the upper region for visual variety.
-            const float dxM = x - 0.68f;
-            const float dyM = y - 0.78f;
-            const float mound = 0.10f * std::exp(-(dxM * dxM / 0.02f + dyM * dyM / 0.015f));
+            const float hill = 0.28f * std::exp(-r2 / (2.0f * sigma * sigma));
+            const float slope = 0.0020f * (x - center);
+            const float ripple =
+                0.03f * std::sin(2.0f * 3.14159265359f * x / static_cast<float>(resolution)) *
+                std::sin(2.0f * 3.14159265359f * y / static_cast<float>(resolution));
 
             dem.elevation[static_cast<size_t>(i) * static_cast<size_t>(resolution) + static_cast<size_t>(j)] =
-                upperPlateau + baseSlope + valley + roughness + mound;
+                hill + slope + ripple;
         }
     }
 
@@ -188,12 +177,11 @@ int main(int argc, char** argv) {
 
     DemData dem;
     bool demLoaded = false;
-    const bool forceProcedural = (argc > 1) && (std::string(argv[1]) == "--procedural");
     try {
-        if (argc > 1 && !forceProcedural) {
+        if (argc > 1) {
             dem = loadDemFromFile(argv[1]);
             demLoaded = true;
-        } else if (!forceProcedural) {
+        } else {
             for (const std::string& candidate : defaultDemCandidates) {
                 try {
                     dem = loadDemFromFile(candidate);
@@ -235,8 +223,6 @@ int main(int argc, char** argv) {
     const float domainWidthModel = domainWidthMeters * modelUnitsPerMeter;
     const float domainHeightModel = domainHeightMeters * modelUnitsPerMeter;
     const std::vector<float> terrainOffset = buildTerrainOffset(dem, 0.15f);
-    const int injectionI = expectedResolution - 1;
-    const int injectionJ = 0;
 
     std::vector<float> terrainVertices;
     std::vector<float> waterVertices;
@@ -245,7 +231,6 @@ int main(int argc, char** argv) {
     std::vector<float> waterBodyVertices;
     std::vector<unsigned int> waterBodyIndices;
     std::vector<unsigned char> wetCellMask;
-    std::vector<unsigned char> wetVertexMask;
     terrainVertices.reserve((gridSize + 1) * (gridSize + 1) * 3);
     waterVertices.reserve((gridSize + 1) * (gridSize + 1) * 3);
     indices.reserve(gridSize * gridSize * 6);
@@ -253,10 +238,6 @@ int main(int argc, char** argv) {
     waterBodyVertices.reserve(gridSize * gridSize * 4 * 3);
     waterBodyIndices.reserve(gridSize * gridSize * 6);
     wetCellMask.resize(static_cast<size_t>(gridSize) * static_cast<size_t>(gridSize), 0);
-    wetVertexMask.resize(
-        static_cast<size_t>(expectedResolution) * static_cast<size_t>(expectedResolution),
-        0
-    );
 
     for (int i = 0; i <= gridSize; i++) {
         for (int j = 0; j <= gridSize; j++) {
@@ -294,13 +275,6 @@ int main(int argc, char** argv) {
 
     ShallowWaterSolver solver(gridSize, dxModel, dyModel);
     solver.setBathymetry(terrainOffset);
-    solver.setInjection(
-        injectionI,
-        injectionJ,
-        7.0f,
-        0.05f,
-        0.5f
-    );
     const int N = solver.resolution();
     bool spaceWasPressed = false;
 
@@ -357,13 +331,6 @@ int main(int argc, char** argv) {
         const bool spaceIsPressed = glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS;
         if (spaceIsPressed && !spaceWasPressed) {
             solver.setBathymetry(terrainOffset);
-            solver.setInjection(
-                injectionI,
-                injectionJ,
-                7.0f,
-                0.005f,
-                6.0f
-            );
         }
         spaceWasPressed = spaceIsPressed;
 
@@ -382,27 +349,23 @@ int main(int argc, char** argv) {
         }
 
         wetWaterIndices.clear();
-        const float wetDepthOn = 3.0e-3f;
-        const float wetDepthOff = 1.5e-3f;
-
-        for (int i = 0; i < N; ++i) {
-            for (int j = 0; j < N; ++j) {
-                const size_t id = static_cast<size_t>(i) * static_cast<size_t>(N) + static_cast<size_t>(j);
-                const float depth = waterVertices[id * 3 + 1] - terrainVertices[id * 3 + 1];
-                const bool previouslyWet = wetVertexMask[id] != 0;
-                const bool nowWet = (depth >= wetDepthOn) || (previouslyWet && depth >= wetDepthOff);
-                wetVertexMask[id] = nowWet ? 1 : 0;
-            }
-        }
-
+        const float wetDepthEps = 8.0e-3f;
         for (size_t k = 0; k + 2 < indices.size(); k += 3) {
             const unsigned int i0 = indices[k];
             const unsigned int i1 = indices[k + 1];
             const unsigned int i2 = indices[k + 2];
 
-            const bool wet0 = wetVertexMask[static_cast<size_t>(i0)] != 0;
-            const bool wet1 = wetVertexMask[static_cast<size_t>(i1)] != 0;
-            const bool wet2 = wetVertexMask[static_cast<size_t>(i2)] != 0;
+            const float terrainY0 = terrainVertices[static_cast<size_t>(i0) * 3 + 1];
+            const float terrainY1 = terrainVertices[static_cast<size_t>(i1) * 3 + 1];
+            const float terrainY2 = terrainVertices[static_cast<size_t>(i2) * 3 + 1];
+
+            const float waterY0 = waterVertices[static_cast<size_t>(i0) * 3 + 1];
+            const float waterY1 = waterVertices[static_cast<size_t>(i1) * 3 + 1];
+            const float waterY2 = waterVertices[static_cast<size_t>(i2) * 3 + 1];
+
+            const bool wet0 = waterY0 > terrainY0 + wetDepthEps;
+            const bool wet1 = waterY1 > terrainY1 + wetDepthEps;
+            const bool wet2 = waterY2 > terrainY2 + wetDepthEps;
             if (wet0 || wet1 || wet2) {
                 wetWaterIndices.push_back(i0);
                 wetWaterIndices.push_back(i1);
@@ -423,10 +386,8 @@ int main(int argc, char** argv) {
                 const float d10 = waterVertices[static_cast<size_t>(id10) * 3 + 1] - terrainVertices[static_cast<size_t>(id10) * 3 + 1];
                 const float d01 = waterVertices[static_cast<size_t>(id01) * 3 + 1] - terrainVertices[static_cast<size_t>(id01) * 3 + 1];
                 const float d11 = waterVertices[static_cast<size_t>(id11) * 3 + 1] - terrainVertices[static_cast<size_t>(id11) * 3 + 1];
-                const float maxDepth = std::max(std::max(d00, d10), std::max(d01, d11));
-                const bool previouslyWet = wetCellMask[cellIndex(i, j)] != 0;
-                const bool nowWet = (maxDepth >= wetDepthOn) || (previouslyWet && maxDepth >= wetDepthOff);
-                wetCellMask[cellIndex(i, j)] = nowWet ? 1 : 0;
+                wetCellMask[cellIndex(i, j)] =
+                    (d00 > wetDepthEps || d10 > wetDepthEps || d01 > wetDepthEps || d11 > wetDepthEps) ? 1 : 0;
             }
         }
 

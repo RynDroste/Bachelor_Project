@@ -2,14 +2,11 @@
 
 #include <vector>
 
-#include "pressure_solver.h"
-
 class ShallowWaterSolver {
 public:
     explicit ShallowWaterSolver(int gridSize);
     ShallowWaterSolver(int gridSize, float dxMeters, float dyMeters);
     void setBathymetry(const std::vector<float>& bedElevation);
-    void setInjection(int centerI, int centerJ, float radiusCells, float rate, float durationSeconds);
 
     void advance(float frameDt);
 
@@ -21,6 +18,10 @@ private:
     int idxU(int i, int jFace) const;
     int idxV(int iFace, int j) const;
     float localDepth(const std::vector<float>& etaField, int i, int j) const;
+    float reconstructedDepthAtUFace(const std::vector<float>& etaField, int i, int jFace) const;
+    float reconstructedDepthAtVFace(const std::vector<float>& etaField, int iFace, int j) const;
+    float reconstructedEtaGradientAtUFace(const std::vector<float>& etaField, int i, int jFace) const;
+    float reconstructedEtaGradientAtVFace(const std::vector<float>& etaField, int iFace, int j) const;
 
     void step();
     void computeRhs(
@@ -45,14 +46,13 @@ private:
     ) const;
     void updateTimeStepFromCfl();
     void applyShapiroFilter(std::vector<float>& etaField) const;
-    float injectionSourceAtCell(int i, int j) const;
     void clampEtaToBathymetry(std::vector<float>& etaField) const;
+    void initializeFreeSurfaceFromBathymetry();
 
     int N;
     float dx;
     float dy;
     float targetDt;
-    float H;
     float g;
     float f;
     float linearDrag;
@@ -79,17 +79,8 @@ private:
     std::vector<float> vRhs;
     std::vector<float> bathymetry;
 
-    PressureSolver pressureSolver;
-    bool enablePressureProjection;
-
     float accumulator;
     float simulationTime;
     int lowEnergySteps;
     bool simulationActive;
-    bool injectionEnabled;
-    int injectionCenterI;
-    int injectionCenterJ;
-    float injectionRadiusCells;
-    float injectionRate;
-    float injectionEndTime;
 };

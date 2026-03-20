@@ -227,9 +227,17 @@ int main(int argc, char** argv) {
     std::vector<float> terrainVertices;
     std::vector<float> waterVertices;
     std::vector<unsigned int> indices;
+    std::vector<unsigned int> wetWaterIndices;
+    std::vector<float> waterBodyVertices;
+    std::vector<unsigned int> waterBodyIndices;
+    std::vector<unsigned char> wetCellMask;
     terrainVertices.reserve((gridSize + 1) * (gridSize + 1) * 3);
     waterVertices.reserve((gridSize + 1) * (gridSize + 1) * 3);
     indices.reserve(gridSize * gridSize * 6);
+    wetWaterIndices.reserve(indices.capacity());
+    waterBodyVertices.reserve(gridSize * gridSize * 4 * 3);
+    waterBodyIndices.reserve(gridSize * gridSize * 6);
+    wetCellMask.resize(static_cast<size_t>(gridSize) * static_cast<size_t>(gridSize), 0);
 
     for (int i = 0; i <= gridSize; i++) {
         for (int j = 0; j <= gridSize; j++) {
@@ -267,15 +275,27 @@ int main(int argc, char** argv) {
 
     ShallowWaterSolver solver(gridSize, dxModel, dyModel);
     solver.setBathymetry(terrainOffset);
+    solver.setInjection(
+        expectedResolution / 4,
+        expectedResolution / 2,
+        5.0f,
+        0.08f,
+        10.0f
+    );
     const int N = solver.resolution();
+    bool spaceWasPressed = false;
 
     float lastTime = static_cast<float>(glfwGetTime());
-    GLuint terrainVAO, terrainVBO, waterVAO, waterVBO, EBO;
+    GLuint terrainVAO, terrainVBO, waterVAO, waterVBO, waterBodyVAO, waterBodyVBO, terrainEBO, waterEBO, waterBodyEBO;
     glGenVertexArrays(1, &terrainVAO);
     glGenBuffers(1, &terrainVBO);
     glGenVertexArrays(1, &waterVAO);
     glGenBuffers(1, &waterVBO);
-    glGenBuffers(1, &EBO);
+    glGenVertexArrays(1, &waterBodyVAO);
+    glGenBuffers(1, &waterBodyVBO);
+    glGenBuffers(1, &terrainEBO);
+    glGenBuffers(1, &waterEBO);
+    glGenBuffers(1, &waterBodyEBO);
 
     glBindVertexArray(terrainVAO);
     glBindBuffer(GL_ARRAY_BUFFER, terrainVBO);
@@ -286,7 +306,7 @@ int main(int argc, char** argv) {
         GL_STATIC_DRAW
     );
 
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, terrainEBO);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), indices.data(), GL_STATIC_DRAW);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
@@ -294,7 +314,16 @@ int main(int argc, char** argv) {
     glBindVertexArray(waterVAO);
     glBindBuffer(GL_ARRAY_BUFFER, waterVBO);
     glBufferData(GL_ARRAY_BUFFER, waterVertices.size() * sizeof(float), waterVertices.data(), GL_DYNAMIC_DRAW);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, waterEBO);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, 0, nullptr, GL_DYNAMIC_DRAW);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+
+    glBindVertexArray(waterBodyVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, waterBodyVBO);
+    glBufferData(GL_ARRAY_BUFFER, 0, nullptr, GL_DYNAMIC_DRAW);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, waterBodyEBO);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, 0, nullptr, GL_DYNAMIC_DRAW);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
 
@@ -306,6 +335,18 @@ int main(int argc, char** argv) {
         if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
             glfwSetWindowShouldClose(window, true);
         }
+        const bool spaceIsPressed = glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS;
+        if (spaceIsPressed && !spaceWasPressed) {
+            solver.setBathymetry(terrainOffset);
+            solver.setInjection(
+                expectedResolution / 4,
+                expectedResolution / 2,
+                5.0f,
+                0.08f,
+                10.0f
+            );
+        }
+        spaceWasPressed = spaceIsPressed;
 
         float currentTime = static_cast<float>(glfwGetTime());
         float frameDt = currentTime - lastTime;
@@ -316,14 +357,140 @@ int main(int argc, char** argv) {
         for (int i = 0; i < N; ++i) {
             for (int j = 0; j < N; ++j) {
                 int v = (i * N + j) * 3;
-                waterVertices[v + 1] =
-                    terrainOffset[static_cast<size_t>(i) * static_cast<size_t>(N) + static_cast<size_t>(j)] +
-                    solver.etaAt(i, j);
+                const float waterSurfaceY = solver.etaAt(i, j);
+                waterVertices[v + 1] = waterSurfaceY;
+            }
+        }
+
+        wetWaterIndices.clear();
+        const float wetDepthEps = 2.0e-3f;
+        for (size_t k = 0; k + 2 < indices.size(); k += 3) {
+            const unsigned int i0 = indices[k];
+            const unsigned int i1 = indices[k + 1];
+            const unsigned int i2 = indices[k + 2];
+
+            const float terrainY0 = terrainVertices[static_cast<size_t>(i0) * 3 + 1];
+            const float terrainY1 = terrainVertices[static_cast<size_t>(i1) * 3 + 1];
+            const float terrainY2 = terrainVertices[static_cast<size_t>(i2) * 3 + 1];
+
+            const float waterY0 = waterVertices[static_cast<size_t>(i0) * 3 + 1];
+            const float waterY1 = waterVertices[static_cast<size_t>(i1) * 3 + 1];
+            const float waterY2 = waterVertices[static_cast<size_t>(i2) * 3 + 1];
+
+            const bool wet0 = waterY0 > terrainY0 + wetDepthEps;
+            const bool wet1 = waterY1 > terrainY1 + wetDepthEps;
+            const bool wet2 = waterY2 > terrainY2 + wetDepthEps;
+            if (wet0 || wet1 || wet2) {
+                wetWaterIndices.push_back(i0);
+                wetWaterIndices.push_back(i1);
+                wetWaterIndices.push_back(i2);
+            }
+        }
+
+        auto cellIndex = [gridSize](int i, int j) -> size_t {
+            return static_cast<size_t>(i) * static_cast<size_t>(gridSize) + static_cast<size_t>(j);
+        };
+        for (int i = 0; i < gridSize; ++i) {
+            for (int j = 0; j < gridSize; ++j) {
+                const int id00 = i * N + j;
+                const int id10 = i * N + (j + 1);
+                const int id01 = (i + 1) * N + j;
+                const int id11 = (i + 1) * N + (j + 1);
+                const float d00 = waterVertices[static_cast<size_t>(id00) * 3 + 1] - terrainVertices[static_cast<size_t>(id00) * 3 + 1];
+                const float d10 = waterVertices[static_cast<size_t>(id10) * 3 + 1] - terrainVertices[static_cast<size_t>(id10) * 3 + 1];
+                const float d01 = waterVertices[static_cast<size_t>(id01) * 3 + 1] - terrainVertices[static_cast<size_t>(id01) * 3 + 1];
+                const float d11 = waterVertices[static_cast<size_t>(id11) * 3 + 1] - terrainVertices[static_cast<size_t>(id11) * 3 + 1];
+                wetCellMask[cellIndex(i, j)] =
+                    (d00 > wetDepthEps || d10 > wetDepthEps || d01 > wetDepthEps || d11 > wetDepthEps) ? 1 : 0;
+            }
+        }
+
+        waterBodyVertices.clear();
+        waterBodyIndices.clear();
+        auto pushVertex = [&waterBodyVertices](float x, float y, float z) -> unsigned int {
+            const unsigned int idx = static_cast<unsigned int>(waterBodyVertices.size() / 3);
+            waterBodyVertices.push_back(x);
+            waterBodyVertices.push_back(y);
+            waterBodyVertices.push_back(z);
+            return idx;
+        };
+        auto addSideQuad = [&](int idA, int idB) {
+            const float xA = terrainVertices[static_cast<size_t>(idA) * 3];
+            const float zA = terrainVertices[static_cast<size_t>(idA) * 3 + 2];
+            const float xB = terrainVertices[static_cast<size_t>(idB) * 3];
+            const float zB = terrainVertices[static_cast<size_t>(idB) * 3 + 2];
+            const float topA = waterVertices[static_cast<size_t>(idA) * 3 + 1];
+            const float topB = waterVertices[static_cast<size_t>(idB) * 3 + 1];
+            const float botA = terrainVertices[static_cast<size_t>(idA) * 3 + 1];
+            const float botB = terrainVertices[static_cast<size_t>(idB) * 3 + 1];
+
+            const unsigned int v0 = pushVertex(xA, topA, zA);
+            const unsigned int v1 = pushVertex(xB, topB, zB);
+            const unsigned int v2 = pushVertex(xA, botA, zA);
+            const unsigned int v3 = pushVertex(xB, botB, zB);
+
+            waterBodyIndices.push_back(v0);
+            waterBodyIndices.push_back(v2);
+            waterBodyIndices.push_back(v1);
+            waterBodyIndices.push_back(v1);
+            waterBodyIndices.push_back(v2);
+            waterBodyIndices.push_back(v3);
+        };
+
+        for (int i = 0; i < gridSize; ++i) {
+            for (int j = 0; j < gridSize; ++j) {
+                if (!wetCellMask[cellIndex(i, j)]) {
+                    continue;
+                }
+
+                const int id00 = i * N + j;
+                const int id10 = i * N + (j + 1);
+                const int id01 = (i + 1) * N + j;
+                const int id11 = (i + 1) * N + (j + 1);
+
+                const bool northDry = (i == 0) || (wetCellMask[cellIndex(i - 1, j)] == 0);
+                const bool southDry = (i == gridSize - 1) || (wetCellMask[cellIndex(i + 1, j)] == 0);
+                const bool westDry = (j == 0) || (wetCellMask[cellIndex(i, j - 1)] == 0);
+                const bool eastDry = (j == gridSize - 1) || (wetCellMask[cellIndex(i, j + 1)] == 0);
+
+                if (northDry) {
+                    addSideQuad(id00, id10);
+                }
+                if (southDry) {
+                    addSideQuad(id01, id11);
+                }
+                if (westDry) {
+                    addSideQuad(id00, id01);
+                }
+                if (eastDry) {
+                    addSideQuad(id10, id11);
+                }
             }
         }
 
         glBindBuffer(GL_ARRAY_BUFFER, waterVBO);
         glBufferSubData(GL_ARRAY_BUFFER, 0, waterVertices.size() * sizeof(float), waterVertices.data());
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, waterEBO);
+        glBufferData(
+            GL_ELEMENT_ARRAY_BUFFER,
+            wetWaterIndices.size() * sizeof(unsigned int),
+            wetWaterIndices.data(),
+            GL_DYNAMIC_DRAW
+        );
+        glBindBuffer(GL_ARRAY_BUFFER, waterBodyVBO);
+        glBufferData(
+            GL_ARRAY_BUFFER,
+            waterBodyVertices.size() * sizeof(float),
+            waterBodyVertices.data(),
+            GL_DYNAMIC_DRAW
+        );
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, waterBodyEBO);
+        glBufferData(
+            GL_ELEMENT_ARRAY_BUFFER,
+            waterBodyIndices.size() * sizeof(unsigned int),
+            waterBodyIndices.data(),
+            GL_DYNAMIC_DRAW
+        );
 
         glClearColor(0.1f, 0.1f, 0.15f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -356,7 +523,12 @@ int main(int argc, char** argv) {
         glUniform3f(colorLocation, 0.12f, 0.40f, 0.95f);
         glUniform1f(alphaLocation, 0.75f);
         glBindVertexArray(waterVAO);
-        glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(indices.size()), GL_UNSIGNED_INT, 0);
+        glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(wetWaterIndices.size()), GL_UNSIGNED_INT, 0);
+
+        glUniform3f(colorLocation, 0.12f, 0.40f, 0.95f);
+        glUniform1f(alphaLocation, 0.55f);
+        glBindVertexArray(waterBodyVAO);
+        glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(waterBodyIndices.size()), GL_UNSIGNED_INT, 0);
         glBindVertexArray(0);
         
         glfwSwapBuffers(window);

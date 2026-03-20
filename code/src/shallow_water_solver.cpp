@@ -42,24 +42,17 @@ ShallowWaterSolver::ShallowWaterSolver(int gridSize, float dxMeters, float dyMet
       vRhs((N + 1) * N, 0.0f),
       bathymetry(N * N, 0.0f),
       pressureSolver(N, dx, dy),
-      enablePressureProjection(true),
+      enablePressureProjection(false),
       accumulator(0.0f),
+      simulationTime(0.0f),
       lowEnergySteps(0),
-      simulationActive(true) {
-    const float etaAmplitude = 0.2f;
-    const float sigmaCells = 6.0f;
-    const float twoSigma2 = 2.0f * sigmaCells * sigmaCells;
-    const int centerI = N / 2;
-    const int centerJ = N / 2;
-
-    for (int i = 0; i < N; ++i) {
-        for (int j = 0; j < N; ++j) {
-            const float di = static_cast<float>(i - centerI);
-            const float dj = static_cast<float>(j - centerJ);
-            const float r2 = di * di + dj * dj;
-            etaCurr[idxEta(i, j)] = etaAmplitude * std::exp(-r2 / twoSigma2);
-        }
-    }
+      simulationActive(true),
+      injectionEnabled(true),
+      injectionCenterI(N / 2),
+      injectionCenterJ(N / 2),
+      injectionRadiusCells(4.0f),
+      injectionRate(0.06f),
+      injectionEndTime(8.0f) {
 
     updateTimeStepFromCfl();
     pressureSolver.setDensity(1.0f);
@@ -73,9 +66,39 @@ ShallowWaterSolver::ShallowWaterSolver(int gridSize, float dxMeters, float dyMet
 void ShallowWaterSolver::setBathymetry(const std::vector<float>& bedElevation) {
     if (bedElevation.size() == bathymetry.size()) {
         bathymetry = bedElevation;
+        etaCurr = bathymetry;
+        etaNext = bathymetry;
+        etaStage = bathymetry;
     } else {
         std::fill(bathymetry.begin(), bathymetry.end(), 0.0f);
+        std::fill(etaCurr.begin(), etaCurr.end(), 0.0f);
+        std::fill(etaNext.begin(), etaNext.end(), 0.0f);
+        std::fill(etaStage.begin(), etaStage.end(), 0.0f);
     }
+    std::fill(uCurr.begin(), uCurr.end(), 0.0f);
+    std::fill(uNext.begin(), uNext.end(), 0.0f);
+    std::fill(uStage.begin(), uStage.end(), 0.0f);
+    std::fill(vCurr.begin(), vCurr.end(), 0.0f);
+    std::fill(vNext.begin(), vNext.end(), 0.0f);
+    std::fill(vStage.begin(), vStage.end(), 0.0f);
+    simulationTime = 0.0f;
+    lowEnergySteps = 0;
+    simulationActive = true;
+}
+
+void ShallowWaterSolver::setInjection(
+    int centerI,
+    int centerJ,
+    float radiusCells,
+    float rate,
+    float durationSeconds
+) {
+    injectionEnabled = durationSeconds > 0.0f && radiusCells > 0.0f && rate > 0.0f;
+    injectionCenterI = std::clamp(centerI, 0, N - 1);
+    injectionCenterJ = std::clamp(centerJ, 0, N - 1);
+    injectionRadiusCells = std::max(radiusCells, 1e-3f);
+    injectionRate = std::max(rate, 0.0f);
+    injectionEndTime = std::max(durationSeconds, 0.0f);
 }
 
 void ShallowWaterSolver::advance(float frameDt) {
@@ -87,6 +110,7 @@ void ShallowWaterSolver::advance(float frameDt) {
     while (accumulator >= dt) {
         if (simulationActive) {
             step();
+            simulationTime += dt;
         }
         accumulator -= dt;
     }
@@ -113,8 +137,19 @@ int ShallowWaterSolver::idxV(int iFace, int j) const {
 }
 
 float ShallowWaterSolver::localDepth(const std::vector<float>& etaField, int i, int j) const {
-    const float h = H + etaField[idxEta(i, j)] - bathymetry[idxEta(i, j)];
+    const float h = etaField[idxEta(i, j)] - bathymetry[idxEta(i, j)];
     return std::max(h, dryDepthThreshold);
+}
+
+float ShallowWaterSolver::injectionSourceAtCell(int i, int j) const {
+    if (!injectionEnabled || simulationTime >= injectionEndTime) {
+        return 0.0f;
+    }
+    const float di = static_cast<float>(i - injectionCenterI);
+    const float dj = static_cast<float>(j - injectionCenterJ);
+    const float r2 = di * di + dj * dj;
+    const float sigma2 = injectionRadiusCells * injectionRadiusCells;
+    return injectionRate * std::exp(-0.5f * r2 / std::max(sigma2, 1e-6f));
 }
 
 void ShallowWaterSolver::step() {
@@ -167,25 +202,30 @@ void ShallowWaterSolver::step() {
     vCurr.swap(vNext);
     applyShapiroFilter(etaCurr);
     applyBoundarySponge(etaCurr, uCurr, vCurr, dt);
+    for (int i = 0; i < N * N; ++i) {
+        etaCurr[i] = std::max(etaCurr[i], bathymetry[i]);
+    }
 
     float kineticEnergy = 0.0f;
     float potentialEnergy = 0.0f;
     for (int i = 0; i < N; ++i) {
         for (int j = 1; j < N; ++j) {
             const float uVal = uCurr[idxU(i, j)];
-            kineticEnergy += 0.5f * H * uVal * uVal;
+            const float hFace = 0.5f * (localDepth(etaCurr, i, j - 1) + localDepth(etaCurr, i, j));
+            kineticEnergy += 0.5f * hFace * uVal * uVal;
         }
     }
     for (int i = 1; i < N; ++i) {
         for (int j = 0; j < N; ++j) {
             const float vVal = vCurr[idxV(i, j)];
-            kineticEnergy += 0.5f * H * vVal * vVal;
+            const float hFace = 0.5f * (localDepth(etaCurr, i - 1, j) + localDepth(etaCurr, i, j));
+            kineticEnergy += 0.5f * hFace * vVal * vVal;
         }
     }
     for (int i = 0; i < N; ++i) {
         for (int j = 0; j < N; ++j) {
-            const float etaVal = etaCurr[idxEta(i, j)];
-            potentialEnergy += 0.5f * g * etaVal * etaVal;
+            const float hVal = localDepth(etaCurr, i, j);
+            potentialEnergy += 0.5f * g * hVal * hVal;
         }
     }
 
@@ -343,7 +383,7 @@ void ShallowWaterSolver::computeRhs(
             const float dvdy = (vField[idxV(i + 1, j)] - vField[idxV(i, j)]) / dy;
             const float divUV = dudx + dvdy;
             const float hLocal = localDepth(etaField, i, j);
-            etaRhsOut[idEta] = advEta - hLocal * divUV;
+            etaRhsOut[idEta] = advEta - hLocal * divUV + injectionSourceAtCell(i, j);
         }
     }
 
@@ -373,8 +413,7 @@ void ShallowWaterSolver::computeRhs(
             const float advU = (uDepart - uField[idU]) / dt;
 
             const float etaDx = (etaField[idxEta(i, j)] - etaField[idxEta(i, j - 1)]) / dx;
-            const float bedDx = (bathymetry[idxEta(i, j)] - bathymetry[idxEta(i, j - 1)]) / dx;
-            const float source = -g * (etaDx + bedDx) + f * vAtU - linearDrag * uField[idU];
+            const float source = -g * etaDx + f * vAtU - linearDrag * uField[idU];
             uRhsOut[idU] = advU + source;
         }
     }
@@ -405,8 +444,7 @@ void ShallowWaterSolver::computeRhs(
             const float advV = (vDepart - vField[idV]) / dt;
 
             const float etaDy = (etaField[idxEta(i, j)] - etaField[idxEta(i - 1, j)]) / dy;
-            const float bedDy = (bathymetry[idxEta(i, j)] - bathymetry[idxEta(i - 1, j)]) / dy;
-            const float source = -g * (etaDy + bedDy) - f * uAtV - linearDrag * vField[idV];
+            const float source = -g * etaDy - f * uAtV - linearDrag * vField[idV];
             vRhsOut[idV] = advV + source;
         }
     }

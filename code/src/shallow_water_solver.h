@@ -9,6 +9,7 @@ public:
     explicit ShallowWaterSolver(int gridSize);
     ShallowWaterSolver(int gridSize, float dxMeters, float dyMeters);
     void setBathymetry(const std::vector<float>& bedElevation);
+    void setInjection(int centerI, int centerJ, float radiusCells, float rate, float durationSeconds);
 
     void advance(float frameDt);
 
@@ -44,6 +45,7 @@ private:
     ) const;
     void updateTimeStepFromCfl();
     void applyShapiroFilter(std::vector<float>& etaField) const;
+    float injectionSourceAtCell(int i, int j) const;
 
     int N;
     float dx;
@@ -80,6 +82,13 @@ private:
     bool enablePressureProjection;
 
     float accumulator;
+    float simulationTime;
     int lowEnergySteps;
     bool simulationActive;
+    bool injectionEnabled;
+    int injectionCenterI;
+    int injectionCenterJ;
+    float injectionRadiusCells;
+    float injectionRate;
+    float injectionEndTime;
 };

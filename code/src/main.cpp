@@ -4,8 +4,8 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <filesystem>
 #include <iostream>
-#include <stdexcept>
 #include <string>
 #include <vector>
 #include <glad/glad.h>
@@ -95,33 +95,14 @@ int main(int argc, char** argv) {
     glShaderSource(vertexShader, 1, &vertexShaderSource, nullptr);
     glCompileShader(vertexShader);
 
-    GLint success;
-    GLchar infoLog[512];
-    glGetShaderiv(vertexShader, GL_COMPILE_STATUS, &success);
-    if (!success) {
-        glGetShaderInfoLog(vertexShader, 512, nullptr, infoLog);
-        std::cout << "ERROR::SHADER::VERTEX::COMPILATION_FAILED\n" << infoLog << std::endl;
-    }
-
     GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
     glShaderSource(fragmentShader, 1, &fragmentShaderSource, nullptr);
     glCompileShader(fragmentShader);
-    
-    glGetShaderiv(fragmentShader, GL_COMPILE_STATUS, &success);
-    if (!success) {
-        glGetShaderInfoLog(fragmentShader, 512, nullptr, infoLog);
-        std::cout << "ERROR::SHADER::FRAGMENT::COMPILATION_FAILED\n" << infoLog << std::endl;
-    }
+
     GLuint shaderProgram = glCreateProgram();
     glAttachShader(shaderProgram, vertexShader);
     glAttachShader(shaderProgram, fragmentShader);
     glLinkProgram(shaderProgram);
-
-    glGetProgramiv(shaderProgram, GL_LINK_STATUS, &success);
-    if (!success) {
-        glGetProgramInfoLog(shaderProgram, 512, nullptr, infoLog);
-        std::cout << "ERROR::PROGRAM::SHADER::COMPILATION_FAILED\n" << infoLog << std::endl;
-    }
 
     glDeleteShader(vertexShader);
     glDeleteShader(fragmentShader);
@@ -138,31 +119,24 @@ int main(int argc, char** argv) {
         "dem_129_utm.asc"
     };
 
-    DemData dem;
-    try {
-        if (argc > 1) {
-            dem = loadDemFromFile(argv[1]);
-        } else {
-            bool loaded = false;
-            for (const std::string& candidate : defaultDemCandidates) {
-                try {
-                    dem = loadDemFromFile(candidate);
-                    loaded = true;
-                    break;
-                } catch (const std::exception&) {
-                    // Try next candidate.
-                }
-            }
-            if (!loaded) {
-                throw std::runtime_error("No DEM file found. Provide a path as argv[1].");
+    std::string demPath;
+    if (argc > 1) {
+        demPath = argv[1];
+    } else {
+        for (const std::string& candidate : defaultDemCandidates) {
+            if (std::filesystem::exists(candidate)) {
+                demPath = candidate;
+                break;
             }
         }
-    } catch (const std::exception& ex) {
-        std::cerr << "Failed to load DEM: " << ex.what() << '\n';
+    }
+    if (demPath.empty()) {
+        std::cerr << "No DEM file found. Provide a path as argv[1].\n";
         glfwDestroyWindow(window);
         glfwTerminate();
         return 1;
     }
+    DemData dem = loadDemFromFile(demPath);
 
     if (dem.width != expectedResolution || dem.height != expectedResolution) {
         std::cerr << "DEM resolution mismatch: expected "
@@ -247,12 +221,8 @@ int main(int argc, char** argv) {
     const int N = solver.resolution();
     bool spaceWasPressed = false;
     bool mousePulseWasPressed = false;
-    bool upWasPressed = false;
-    bool downWasPressed = false;
-    bool leftWasPressed = false;
-    bool rightWasPressed = false;
-    float pulseAmplitude = 0.03f;
-    float pulseSigmaCells = 4.0f;
+    constexpr float pulseAmplitude = 0.03f;
+    constexpr float pulseSigmaCells = 4.0f;
     const float wetDepthOn = 8.0e-3f;
     const float wetDepthOff = 4.0e-3f;
     const float waterSurfaceLift = 1.0e-4f;
@@ -369,34 +339,6 @@ int main(int argc, char** argv) {
             }
         }
         mousePulseWasPressed = mousePulseIsPressed;
-
-        const bool upIsPressed = glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS;
-        if (upIsPressed && !upWasPressed) {
-            pulseAmplitude = std::min(pulseAmplitude + 0.005f, 0.20f);
-            std::cout << "Pulse amplitude: " << pulseAmplitude << ", sigma: " << pulseSigmaCells << '\n';
-        }
-        upWasPressed = upIsPressed;
-
-        const bool downIsPressed = glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS;
-        if (downIsPressed && !downWasPressed) {
-            pulseAmplitude = std::max(pulseAmplitude - 0.005f, 0.001f);
-            std::cout << "Pulse amplitude: " << pulseAmplitude << ", sigma: " << pulseSigmaCells << '\n';
-        }
-        downWasPressed = downIsPressed;
-
-        const bool leftIsPressed = glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS;
-        if (leftIsPressed && !leftWasPressed) {
-            pulseSigmaCells = std::max(pulseSigmaCells - 0.5f, 1.0f);
-            std::cout << "Pulse amplitude: " << pulseAmplitude << ", sigma: " << pulseSigmaCells << '\n';
-        }
-        leftWasPressed = leftIsPressed;
-
-        const bool rightIsPressed = glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS;
-        if (rightIsPressed && !rightWasPressed) {
-            pulseSigmaCells = std::min(pulseSigmaCells + 0.5f, 24.0f);
-            std::cout << "Pulse amplitude: " << pulseAmplitude << ", sigma: " << pulseSigmaCells << '\n';
-        }
-        rightWasPressed = rightIsPressed;
 
         float currentTime = static_cast<float>(glfwGetTime());
         float frameDt = currentTime - lastTime;

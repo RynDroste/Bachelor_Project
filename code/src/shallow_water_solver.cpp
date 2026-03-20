@@ -5,9 +5,16 @@
 #include <iostream>
 
 ShallowWaterSolver::ShallowWaterSolver(int gridSize)
+    : ShallowWaterSolver(
+          gridSize,
+          2.0f / static_cast<float>(std::max(gridSize, 1)),
+          2.0f / static_cast<float>(std::max(gridSize, 1))
+      ) {}
+
+ShallowWaterSolver::ShallowWaterSolver(int gridSize, float dxMeters, float dyMeters)
     : N(gridSize + 1),
-      dx(2.0f / static_cast<float>(gridSize)),
-      dy(dx),
+      dx(std::max(dxMeters, 1e-6f)),
+      dy(std::max(dyMeters, 1e-6f)),
       targetDt(1.0f / 120.0f),
       H(1.0f),
       g(9.81f),

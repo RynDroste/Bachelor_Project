@@ -7,6 +7,7 @@
 class ShallowWaterSolver {
 public:
     explicit ShallowWaterSolver(int gridSize);
+    ShallowWaterSolver(int gridSize, float dxMeters, float dyMeters);
 
     void advance(float frameDt);
 

@@ -57,7 +57,6 @@ private:
     float dy;
     float targetDt;
     float g;
-    float f;
     float linearDrag;
     float cflLimit;
     float shapiroStrength;

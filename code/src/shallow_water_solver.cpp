@@ -16,7 +16,6 @@ ShallowWaterSolver::ShallowWaterSolver(int gridSize, float dxMeters, float dyMet
       dy(std::max(dyMeters, 1e-6f)),
       targetDt(1.0f / 120.0f),
       g(9.81f),
-      f(0.1f),
       linearDrag(0.05f),
       cflLimit(0.45f),
       shapiroStrength(0.0f),
@@ -63,6 +62,7 @@ void ShallowWaterSolver::setBathymetry(const std::vector<float>& bedElevation) {
     std::fill(vCurr.begin(), vCurr.end(), 0.0f);
     std::fill(vNext.begin(), vNext.end(), 0.0f);
     std::fill(vStage.begin(), vStage.end(), 0.0f);
+    accumulator = 0.0f;
     simulationTime = 0.0f;
     lowEnergySteps = 0;
     simulationActive = true;
@@ -520,30 +520,37 @@ void ShallowWaterSolver::computeRhs(
         const float sign = (a > 0.0f) ? 1.0f : -1.0f;
         return sign * std::min(std::fabs(a), std::fabs(b));
     };
+    // Staggered-grid extents:
+    // u(i, jFace): i in [0, N-1], jFace in [0, N]
+    // v(iFace, j): iFace in [0, N], j in [0, N-1]
+    const int uJMax = N;
+    const int uIMax = N - 1;
+    const int vIMax = N;
+    const int vJMax = N - 1;
     auto slopeUx = [&](int i, int j) -> float {
         const int jm = std::max(j - 1, 0);
-        const int jp = std::min(j + 1, N);
+        const int jp = std::min(j + 1, uJMax);
         const float duMinus = uField[idxU(i, j)] - uField[idxU(i, jm)];
         const float duPlus = uField[idxU(i, jp)] - uField[idxU(i, j)];
         return minmod(duMinus, duPlus);
     };
     auto slopeUy = [&](int i, int j) -> float {
         const int im = std::max(i - 1, 0);
-        const int ip = std::min(i + 1, N - 1);
+        const int ip = std::min(i + 1, uIMax);
         const float duMinus = uField[idxU(i, j)] - uField[idxU(im, j)];
         const float duPlus = uField[idxU(ip, j)] - uField[idxU(i, j)];
         return minmod(duMinus, duPlus);
     };
     auto slopeVx = [&](int i, int j) -> float {
         const int jm = std::max(j - 1, 0);
-        const int jp = std::min(j + 1, N - 1);
+        const int jp = std::min(j + 1, vJMax);
         const float dvMinus = vField[idxV(i, j)] - vField[idxV(i, jm)];
         const float dvPlus = vField[idxV(i, jp)] - vField[idxV(i, j)];
         return minmod(dvMinus, dvPlus);
     };
     auto slopeVy = [&](int i, int j) -> float {
         const int im = std::max(i - 1, 0);
-        const int ip = std::min(i + 1, N);
+        const int ip = std::min(i + 1, vIMax);
         const float dvMinus = vField[idxV(i, j)] - vField[idxV(im, j)];
         const float dvPlus = vField[idxV(ip, j)] - vField[idxV(i, j)];
         return minmod(dvMinus, dvPlus);
@@ -608,7 +615,7 @@ void ShallowWaterSolver::computeRhs(
             const float etaDxRec = reconstructedEtaGradientAtUFace(etaField, i, j);
             const float dragEff =
                 (hFace > dryDepthThreshold) ? linearDrag : (1.0f / std::max(dt, 1e-6f));
-            const float source = -g * etaDxRec + f * vAtU - dragEff * uField[idU];
+            const float source = -g * etaDxRec - dragEff * uField[idU];
             uRhsOut[idU] = advU + source;
         }
     }
@@ -658,7 +665,7 @@ void ShallowWaterSolver::computeRhs(
             const float etaDyRec = reconstructedEtaGradientAtVFace(etaField, i, j);
             const float dragEff =
                 (hFace > dryDepthThreshold) ? linearDrag : (1.0f / std::max(dt, 1e-6f));
-            const float source = -g * etaDyRec - f * uAtV - dragEff * vField[idV];
+            const float source = -g * etaDyRec - dragEff * vField[idV];
             vRhsOut[idV] = advV + source;
         }
     }

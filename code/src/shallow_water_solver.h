@@ -8,6 +8,7 @@ class ShallowWaterSolver {
 public:
     explicit ShallowWaterSolver(int gridSize);
     ShallowWaterSolver(int gridSize, float dxMeters, float dyMeters);
+    void setBathymetry(const std::vector<float>& bedElevation);
 
     void advance(float frameDt);
 
@@ -18,6 +19,7 @@ private:
     int idxEta(int i, int j) const;
     int idxU(int i, int jFace) const;
     int idxV(int iFace, int j) const;
+    float localDepth(const std::vector<float>& etaField, int i, int j) const;
 
     void step();
     void computeRhs(
@@ -58,6 +60,7 @@ private:
     float energyThreshold;
     int lowEnergyStepsRequired;
     float dt;
+    float dryDepthThreshold;
 
     std::vector<float> etaCurr;
     std::vector<float> etaNext;
@@ -71,6 +74,7 @@ private:
     std::vector<float> vNext;
     std::vector<float> vStage;
     std::vector<float> vRhs;
+    std::vector<float> bathymetry;
 
     PressureSolver pressureSolver;
     bool enablePressureProjection;

@@ -1,4 +1,6 @@
 code/build/
 .DS_Store
-ags_scripts/
-**/ags_scripts/
+code/src/*.asc
+code/src/*.prj
+code/src/*.aux.xml
+code/src/*.tif

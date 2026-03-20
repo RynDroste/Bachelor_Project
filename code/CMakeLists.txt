@@ -41,6 +41,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 )
 
 find_package(OpenGL REQUIRED)
+find_package(GDAL REQUIRED)
 
 # GLFW: prefer system installation, fallback to bundled external/glfw
 find_package(glfw3 CONFIG QUIET)
@@ -78,3 +79,10 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     ${GLM_TARGET}
     OpenGL::GL
 )
+
+if(TARGET GDAL::GDAL)
+    target_link_libraries(${PROJECT_NAME} PRIVATE GDAL::GDAL)
+else()
+    target_include_directories(${PROJECT_NAME} PRIVATE ${GDAL_INCLUDE_DIRS})
+    target_link_libraries(${PROJECT_NAME} PRIVATE ${GDAL_LIBRARIES})
+endif()

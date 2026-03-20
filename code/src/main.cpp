@@ -2,11 +2,14 @@
 #define GLFW_INCLUDE_NONE
 
 #include <iostream>
+#include <string>
+#include <stdexcept>
 #include <vector>
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 
 #include "shallow_water_solver.h"
+#include "terrain_loader.h"
 
 namespace {
 
@@ -127,7 +130,29 @@ int main() {
         }
     }
 
-    ShallowWaterSolver solver(gridSize);
+    const float defaultDx = 2.0f / static_cast<float>(gridSize);
+    const float defaultDy = defaultDx;
+    float solverDx = defaultDx;
+    float solverDy = defaultDy;
+    const std::string demPath = "src/dem_129_utm.asc";
+
+    try {
+        const DemInfo demInfo = loadDemInfo(demPath);
+        if (demInfo.width == gridSize + 1 && demInfo.height == gridSize + 1) {
+            solverDx = demInfo.dx;
+            solverDy = demInfo.dy;
+            std::cout << "Loaded DEM geotransform from " << demPath
+                      << " (dx=" << solverDx << ", dy=" << solverDy << ")\n";
+        } else {
+            std::cout << "DEM grid size mismatch (" << demInfo.width << "x" << demInfo.height
+                      << "), expected " << (gridSize + 1) << "x" << (gridSize + 1)
+                      << ". Falling back to default spacing.\n";
+        }
+    } catch (const std::exception& e) {
+        std::cout << "DEM load skipped: " << e.what() << '\n';
+    }
+
+    ShallowWaterSolver solver(gridSize, solverDx, solverDy);
     const int N = solver.resolution();
 
     float lastTime = static_cast<float>(glfwGetTime());

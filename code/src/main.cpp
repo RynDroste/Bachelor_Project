@@ -38,6 +38,7 @@ static const char* kFragSrc = R"GLSL(
 in vec3 vWorldPos;
 in float vDepth;
 uniform vec3 uLightDir;
+uniform float uAlpha;
 out vec4 FragColor;
 void main() {
     vec3 nx = dFdx(vWorldPos);
@@ -50,7 +51,7 @@ void main() {
     vec3 L = normalize(uLightDir);
     float ndl = max(dot(N, L), 0.0);
     vec3 rgb = base * (0.22 + 0.78 * ndl);
-    FragColor = vec4(rgb, 0.42);
+    FragColor = vec4(rgb, uAlpha);
 }
 )GLSL";
 
@@ -315,6 +316,7 @@ int main() {
     }
     GLint locMVP = glGetUniformLocation(prog, "uMVP");
     GLint locLight = glGetUniformLocation(prog, "uLightDir");
+    GLint locWaterAlpha = glGetUniformLocation(prog, "uAlpha");
 
     Grid g(kNx, kNy, kDx, kDt);
     const float halfW = 0.5f * kNx * kDx;
@@ -366,9 +368,8 @@ int main() {
     glBindVertexArray(0);
 
     glEnable(GL_DEPTH_TEST);
-    glEnable(GL_CULL_FACE);
-    glCullFace(GL_BACK);
-    glClearColor(0.06f, 0.08f, 0.12f, 1.f);
+    glDepthFunc(GL_LESS);
+    glClearColor(0.14f, 0.18f, 0.26f, 1.f);
 
     glm::vec3 lightDir = glm::normalize(glm::vec3(0.35f, 0.85f, 0.4f));
 
@@ -390,6 +391,14 @@ int main() {
             sweStep(g);
         }
 
+        {
+            char title[192];
+            const char* gear = (boat.speed > 0.05f) ? "FWD" : (boat.speed < -0.05f) ? "REV" : "NEU";
+            std::snprintf(title, sizeof title, "Shallow water | %.2f m/s (%s) | throttle %.2f", boat.speed, gear,
+                          boat.throttle);
+            glfwSetWindowTitle(window, title);
+        }
+
         fillWaterMesh(g, halfW, halfD, vertices);
         glBindBuffer(GL_ARRAY_BUFFER, vbo);
         glBufferData(GL_ARRAY_BUFFER,
@@ -408,11 +417,11 @@ int main() {
         glViewport(0, 0, frame.fbW, frame.fbH);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+        glDepthMask(GL_TRUE);
+        glDisable(GL_CULL_FACE);
         if (boatProg) {
             fillBoatSolidMesh(boatVerts, boat);
 
-            glDisable(GL_CULL_FACE);
-            glDepthMask(GL_TRUE);
             glUseProgram(boatProg);
             glUniformMatrix4fv(locBoatMVP, 1, GL_FALSE, glm::value_ptr(mvp));
             glUniform3fv(locBoatLight, 1, glm::value_ptr(lightDir));
@@ -424,21 +433,21 @@ int main() {
                             boatVerts.data());
             glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(boatVerts.size() / 6));
             glBindVertexArray(0);
-            glEnable(GL_CULL_FACE);
         }
 
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         glDepthMask(GL_FALSE);
-
         glDisable(GL_CULL_FACE);
+
         glUseProgram(prog);
         glUniformMatrix4fv(locMVP, 1, GL_FALSE, glm::value_ptr(mvp));
         glUniform3fv(locLight, 1, glm::value_ptr(lightDir));
+        if (locWaterAlpha >= 0)
+            glUniform1f(locWaterAlpha, 0.84f);
         glBindVertexArray(vao);
         glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(indices.size()), GL_UNSIGNED_INT, nullptr);
         glBindVertexArray(0);
-        glEnable(GL_CULL_FACE);
 
         glDepthMask(GL_TRUE);
         glDisable(GL_BLEND);

@@ -13,8 +13,10 @@ namespace {
 constexpr float kG            = 9.81f;
 constexpr float kDryEps       = 1e-4f;
 constexpr float kMaxSpeed     = 8.f;
-constexpr float kForcingScale = 2.2f;
+constexpr float kForcingScale = 4.16f;
 constexpr float kTurnGain     = 1.2f;
+// Gaussian falloff in normalized hull coords (nx^2+ny^2); larger = tighter footprint
+constexpr float kGaussInvScale = 3.0f;
 
 float sampleH(const Grid& g, int i, int j) {
     i = std::clamp(i, 0, g.NX - 1);
@@ -68,9 +70,9 @@ void updateBoat(Boat& boat, Grid& g, GLFWwindow* window, float halfW, float half
         if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
             boat.throttle = std::max(-1.f, boat.throttle - dt * 0.8f);
         if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
-            boat.rudder = std::min(0.5f, boat.rudder + dt * 0.6f);
-        if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
             boat.rudder = std::max(-0.5f, boat.rudder - dt * 0.6f);
+        if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
+            boat.rudder = std::min(0.5f, boat.rudder + dt * 0.6f);
         if (glfwGetKey(window, GLFW_KEY_A) != GLFW_PRESS && glfwGetKey(window, GLFW_KEY_D) != GLFW_PRESS)
             boat.rudder *= std::exp(-dt * 4.f);
     } else {
@@ -80,7 +82,7 @@ void updateBoat(Boat& boat, Grid& g, GLFWwindow* window, float halfW, float half
 
     boat.speed = boat.throttle * kMaxSpeed;
     const float steerSign = (boat.speed >= 0.f) ? 1.f : -1.f;
-    float turnRate = -boat.rudder * kTurnGain * steerSign *
+    float turnRate = boat.rudder * kTurnGain * steerSign *
                      (std::abs(boat.speed) / std::max(boat.length, 0.1f));
     boat.heading += turnRate * dt;
 
@@ -145,6 +147,10 @@ void applyBoatForcing(Boat& boat, Grid& g, float halfW, float halfD, float dt) {
     j1 = std::clamp(j1, 1, g.NY - 2);
     i0 = std::clamp(i0, 1, g.NX - 2);
     i1 = std::clamp(i1, 1, g.NX - 2);
+    i0 = std::max(1, i0 - 2);
+    i1 = std::min(g.NX - 2, i1 + 2);
+    j0 = std::max(1, j0 - 2);
+    j1 = std::min(g.NY - 2, j1 + 2);
 
     const float vx = co * boat.speed;
     const float vz = si * boat.speed;
@@ -164,13 +170,11 @@ void applyBoatForcing(Boat& boat, Grid& g, float halfW, float halfD, float dt) {
             float lx = co * dxw + si * dzw;
             float ly = -si * dxw + co * dzw;
 
-            if (std::fabs(lx) > halfL || std::fabs(ly) > halfWb)
-                continue;
-
-            float nx = lx / halfL;
-            float ny = ly / halfWb;
-            float shapeW = std::max(0.f, 1.f - nx * nx - ny * ny);
-            if (shapeW <= 0.f)
+            const float nx = lx / std::max(halfL, 1e-4f);
+            const float ny = ly / std::max(halfWb, 1e-4f);
+            const float r2 = nx * nx + ny * ny;
+            const float shapeW = std::exp(-kGaussInvScale * r2);
+            if (shapeW < 1e-5f)
                 continue;
 
             float hLoc = g.H(i, j);
@@ -181,7 +185,7 @@ void applyBoatForcing(Boat& boat, Grid& g, float halfW, float halfD, float dt) {
             float froude = speedAbs / std::sqrt(std::max(kG * hLoc, 1e-6f));
             float forcing = boat.draft * speedAbs * shapeW * kForcingScale;
             forcing *= (0.7f + 0.15f * std::min(froude, 2.5f));
-            forcing *= 0.35f + 0.65f * std::abs(nx);
+            forcing *= 0.35f + 0.65f * (nx * nx);
 
             const float dFlux = forcing * dt;
 

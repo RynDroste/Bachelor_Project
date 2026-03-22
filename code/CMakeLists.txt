@@ -1,5 +1,5 @@
-cmake_minimum_required(VERSION 3.16)
-project(BachelorProject LANGUAGES C CXX)
+cmake_minimum_required(VERSION 3.23)
+project(BachelorProject LANGUAGES C CXX CUDA)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -8,6 +8,8 @@ set(CMAKE_C_EXTENSIONS OFF)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_CUDA_STANDARD 17)
+set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # Collect project sources under src/
@@ -33,45 +35,34 @@ endif()
 add_executable(${PROJECT_NAME}
     ${APP_SOURCES}
     "${CMAKE_CURRENT_SOURCE_DIR}/external/glad/src/glad.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/airy_cuda_kernels.cu"
 )
 
-# diffusion_dispersion_bench: CSV of relative phase speed vs wavelength (plot with tools/plot_diffusion_dispersion.py)
-add_executable(diffusion_dispersion_bench
-    tools/diffusion_dispersion_bench.cpp
-    src/wavedecomposer.cpp
-    src/shallow_water_solver.cpp
+set_target_properties(${PROJECT_NAME} PROPERTIES
+    CUDA_SEPARABLE_COMPILATION ON
 )
-target_include_directories(diffusion_dispersion_bench PRIVATE
-    "${CMAKE_CURRENT_SOURCE_DIR}/src"
-)
+# Do not default to "native": configuring without a GPU (or wrong GPU) yields a mismatched arch and
+# Ampere/Ada then JITs older PTX → "PTX was compiled with an unsupported toolchain" on some setups.
+# XX-real embeds cubin only for that SM (no forward-compat PTX), which avoids that JIT path.
+if(NOT DEFINED CACHE{CMAKE_CUDA_ARCHITECTURES})
+    set(CMAKE_CUDA_ARCHITECTURES "86-real;89-real;80-real;75-real" CACHE STRING
+        "CUDA targets, e.g. 86-real for RTX 30xx. Reconfigure if your GPU differs; update NVIDIA driver if errors persist.")
+endif()
+message(STATUS "CMAKE_CUDA_ARCHITECTURES=${CMAKE_CUDA_ARCHITECTURES}")
+if(CMAKE_CUDA_ARCHITECTURES STREQUAL "native")
+    message(WARNING "CUDA: CMAKE_CUDA_ARCHITECTURES=native can pick the wrong SM if configure ran without your GPU; "
+                    "use e.g. -DCMAKE_CUDA_ARCHITECTURES=86-real for RTX 30xx (Ampere).")
+endif()
 
 target_include_directories(${PROJECT_NAME} PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${CMAKE_CURRENT_SOURCE_DIR}/external/glad/include"
-    "${FFTW3F_INCLUDE_DIR}"
 )
 
 find_package(OpenGL REQUIRED)
 
-# FFTW single precision (Algorithm 2 / eWave)
-find_path(FFTW3F_INCLUDE_DIR fftw3.h
-    PATH_SUFFIXES fftw3
-    PATHS
-        /opt/homebrew/include
-        /usr/local/include
-        /usr/include
-)
-find_library(FFTW3F_LIBRARY NAMES fftw3f
-    PATHS
-        /opt/homebrew/lib
-        /usr/local/lib
-        /usr/lib/x86_64-linux-gnu
-        /usr/lib
-)
-if(NOT FFTW3F_INCLUDE_DIR OR NOT FFTW3F_LIBRARY)
-    message(FATAL_ERROR
-        "FFTW3f not found (need fftw3.h + libfftw3f). macOS: brew install fftw")
-endif()
+# cuFFT for Airy eWave (Algorithm 2); requires CUDA Toolkit
+find_package(CUDAToolkit REQUIRED)
 
 # GLFW: prefer system installation, fallback to bundled external/glfw
 find_package(glfw3 CONFIG QUIET)
@@ -108,5 +99,6 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     ${GLFW_TARGET}
     ${GLM_TARGET}
     OpenGL::GL
-    ${FFTW3F_LIBRARY}
+    CUDA::cudart
+    CUDA::cufft
 )

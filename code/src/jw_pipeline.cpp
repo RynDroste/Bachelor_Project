@@ -6,8 +6,22 @@
 #include "wavedecomposer.h"
 
 #include <algorithm>
+#include <memory>
 
 namespace {
+
+// Reuse bar-state grids across substeps (avoids two large heap allocs per jwCoupledSubstep).
+struct BarGridScratch {
+    std::unique_ptr<Grid> gBar0;
+    std::unique_ptr<Grid> gBar1;
+    void ensureLike(const Grid& g) {
+        if (!gBar0 || gBar0->NX != g.NX || gBar0->NY != g.NY || gBar0->dx != g.dx || gBar0->dt != g.dt) {
+            gBar0 = std::make_unique<Grid>(g.NX, g.NY, g.dx, g.dt);
+            gBar1 = std::make_unique<Grid>(g.NX, g.NY, g.dx, g.dt);
+        }
+    }
+};
+static BarGridScratch g_barScratch;
 
 void assignBarState(Grid& dst, const Grid& terrainSrc, const WaveDecomposition& dec) {
     for (int j = 0; j < dst.NY; ++j) {
@@ -35,14 +49,16 @@ void jwCoupledSubstep(Grid& g, float halfW, float halfD,
                       std::vector<float>& hTildePrevHalf,
                       bool& haveHtildePrevHalf,
                       float gradPenaltyD,
-                      float transportGamma) {
+                      float transportGamma,
+                      int waveDiffuseIters) {
     const float dt = g.dt;
 
-    waveDecompose(g, gradPenaltyD, dec);
+    waveDecompose(g, gradPenaltyD, waveDiffuseIters, dec);
 
-    Grid gBar0(g.NX, g.NY, g.dx, g.dt);
+    g_barScratch.ensureLike(g);
+    Grid& gBar0 = *g_barScratch.gBar0;
+    Grid& gBar1 = *g_barScratch.gBar1;
     assignBarState(gBar0, g, dec);
-    Grid gBar1(g.NX, g.NY, g.dx, g.dt);
     assignBarState(gBar1, g, dec);
     sweStep(gBar1);
 

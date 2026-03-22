@@ -22,8 +22,11 @@ constexpr float kDx = 1.0f;
 constexpr float kDt = 1.0f / 120.0f;
 constexpr int   kSubsteps = 2;
 // false: Stelling & Duinmeijer only (sweStep); true: full J&W (decompose, SWE, Airy, transport, recombine)
-constexpr bool  kJwCoupledStep = false;
-constexpr float kGradPenaltyD = 0.01f; // paper Eq. (13): d = 1/100
+constexpr bool  kJwCoupledStep = true;
+constexpr float kGradPenaltyD = 0.25f; // paper Eq. (13): d = 1/100
+constexpr bool  kVsync          = true; // true: FPS capped at monitor refresh (~60/120)
+// J&W wave low-pass diffusion iterations per substep (header default was 128; lower = much faster).
+constexpr int   kJwDiffuseIters = 8;
 
 static const char* kVertSrc = R"GLSL(
 #version 330 core
@@ -300,7 +303,7 @@ int main() {
         return 1;
     }
     glfwMakeContextCurrent(window);
-    glfwSwapInterval(1);
+    glfwSwapInterval(kVsync ? 1 : 0);
 
     if (!gladLoadGLLoader(reinterpret_cast<GLADloadproc>(glfwGetProcAddress))) {
         std::fprintf(stderr, "gladLoadGLLoader failed\n");
@@ -394,6 +397,10 @@ int main() {
     std::vector<float> boatVerts;
     boatVerts.reserve(256);
 
+    double fpsPrevT = glfwGetTime();
+    float  fpsShown = 0.f;
+    GLsizeiptr waterVboBytes = 0;
+
     while (!glfwWindowShouldClose(window)) {
         if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
             glfwSetWindowShouldClose(window, GLFW_TRUE);
@@ -404,24 +411,20 @@ int main() {
             applyBoatForcing(boat, g, halfW, halfD, g.dt);
             if (kJwCoupledStep)
                 jwCoupledSubstep(g, halfW, halfD, waveDec, *airy, hTildeSym, hTildePrevHalf, haveHtildePrevHalf,
-                                 kGradPenaltyD);
+                                 kGradPenaltyD, 0.25f, kJwDiffuseIters);
             else
                 sweStep(g);
         }
 
-        {
-            char title[192];
-            const char* gear = (boat.speed > 0.05f) ? "FWD" : (boat.speed < -0.05f) ? "REV" : "NEU";
-            std::snprintf(title, sizeof title, "Shallow water | %.2f m/s (%s) | throttle %.2f", boat.speed, gear,
-                          boat.throttle);
-            glfwSetWindowTitle(window, title);
-        }
-
         fillWaterMesh(g, halfW, halfD, vertices);
         glBindBuffer(GL_ARRAY_BUFFER, vbo);
-        glBufferData(GL_ARRAY_BUFFER,
-                     static_cast<GLsizeiptr>(vertices.size() * sizeof(float)),
-                     vertices.data(), GL_DYNAMIC_DRAW);
+        const GLsizeiptr vbytes = static_cast<GLsizeiptr>(vertices.size() * sizeof(float));
+        if (waterVboBytes != vbytes) {
+            waterVboBytes = vbytes;
+            glBufferData(GL_ARRAY_BUFFER, vbytes, vertices.data(), GL_DYNAMIC_DRAW);
+        } else {
+            glBufferSubData(GL_ARRAY_BUFFER, 0, vbytes, vertices.data());
+        }
 
         float aspect = frame.fbH > 0 ? static_cast<float>(frame.fbW) / static_cast<float>(frame.fbH) : 1.f;
         const float ang = 0.85f;  // fixed azimuth (no orbit)
@@ -472,6 +475,22 @@ int main() {
 
         glfwSwapBuffers(window);
         glfwPollEvents();
+
+        {
+            const double now = glfwGetTime();
+            const double dtF = now - fpsPrevT;
+            fpsPrevT = now;
+            if (dtF > 1e-6 && dtF < 2.0) {
+                const float inst = static_cast<float>(1.0 / dtF);
+                fpsShown = (fpsShown < 1e-3f) ? inst : (fpsShown * 0.92f + inst * 0.08f);
+            }
+            char title[256];
+            const char* gear = (boat.speed > 0.05f) ? "FWD" : (boat.speed < -0.05f) ? "REV" : "NEU";
+            std::snprintf(title, sizeof title,
+                          "Shallow water | %.0f FPS | %.2f m/s (%s) | throttle %.2f", static_cast<double>(fpsShown),
+                          boat.speed, gear, boat.throttle);
+            glfwSetWindowTitle(window, title);
+        }
     }
 
     glDeleteProgram(prog);

@@ -15,4 +15,5 @@ void jwCoupledSubstep(Grid& g, float halfW, float halfD,
                       std::vector<float>& hTildePrevHalf,
                       bool& haveHtildePrevHalf,
                       float gradPenaltyD,
-                      float transportGamma = 0.25f);
+                      float transportGamma = 0.25f,
+                      int waveDiffuseIters = 128);

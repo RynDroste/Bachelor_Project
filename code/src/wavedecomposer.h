@@ -1,0 +1,24 @@
+// =============================================================================
+// Wave decomposer — Jeschke & Wojtan-style split of h, q into low-pass (bar)
+// and residual (tilde). Uses free-surface H = h + bed for filtering; α from h.
+// =============================================================================
+
+#pragma once
+
+#include "shallow_water_solver.h"
+
+#include <vector>
+
+struct WaveDecomposition {
+    std::vector<float> h_bar;
+    std::vector<float> h_tilde;
+    std::vector<float> qx_bar;
+    std::vector<float> qx_tilde;
+    std::vector<float> qy_bar;
+    std::vector<float> qy_tilde;
+};
+
+// d_grad_penalty: d in α = (h²/64) * exp(-d * |∇h|²).
+// n_diffusion_iters: 显式扩散子步数（论文 Fig.9 对比 8 / 16 / 32 / 128）。
+void waveDecompose(const Grid& g, float d_grad_penalty, int n_diffusion_iters, WaveDecomposition& out);
+void waveDecompose(const Grid& g, float d_grad_penalty, WaveDecomposition& out); // 默认 128 次

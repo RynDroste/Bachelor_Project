@@ -83,7 +83,7 @@ static inline float avgQY(const Grid& g, int i, int j) {
 //   - Domain edges: reflecting (q = 0)
 //   - Terrain-blocked faces: q = 0
 // =============================================================================
-static void applyBC(Grid& g) {
+void sweApplyBoundaryConditions(Grid& g) {
     // Domain edges
     for (int j = 0; j < g.NY; ++j) {
         g.QX(0,    j) = 0.f;
@@ -258,7 +258,7 @@ static void stepQY(const Grid& g, std::vector<float>& qy_out) {
 // breaks the leapfrog coupling and leads to blow-up (spikes / NaN).
 // =============================================================================
 void sweStep(Grid& g) {
-    applyBC(g);
+    sweApplyBoundaryConditions(g);
 
     std::vector<float> qx_new, qy_new, h_new;
     stepQX(g, qx_new);
@@ -266,11 +266,11 @@ void sweStep(Grid& g) {
 
     g.qx.swap(qx_new);
     g.qy.swap(qy_new);
-    applyBC(g);
+    sweApplyBoundaryConditions(g);
 
     stepHeight(g, h_new);
 
     g.h = h_new;
 
-    applyBC(g);
+    sweApplyBoundaryConditions(g);
 }

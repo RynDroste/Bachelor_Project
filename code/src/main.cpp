@@ -4,20 +4,26 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
+#include "airy_fftw.h"
 #include "boat.h"
+#include "jw_pipeline.h"
 #include "shallow_water_solver.h"
-
+#include "wavedecomposer.h"
 #include <cmath>
 #include <cstdio>
+#include <memory>
 #include <vector>
 
 namespace {
 
-constexpr int   kNx = 64;
-constexpr int   kNy = 64;
+constexpr int   kNx = 128;
+constexpr int   kNy = 128;
 constexpr float kDx = 1.0f;
 constexpr float kDt = 1.0f / 120.0f;
 constexpr int   kSubsteps = 2;
+// J&W 2023 Algorithm 1：步初分解 → bulk SWE → Airy → 表面输运 → 合成（见 jw_pipeline.cpp）
+constexpr bool  kUseAiryEWave = true;
+constexpr float kGradPenaltyD = 0.01f; // 论文式 (13) 中 d = 1/100
 
 static const char* kVertSrc = R"GLSL(
 #version 330 core
@@ -319,6 +325,14 @@ int main() {
     GLint locWaterAlpha = glGetUniformLocation(prog, "uAlpha");
 
     Grid g(kNx, kNy, kDx, kDt);
+    WaveDecomposition waveDec;
+    // Airy：\tilde h 与 q 在整步 t 对齐 — (h^{t-Δt/2}+h^{t+Δt/2})/2，来自相邻两次波分解
+    std::vector<float> hTildePrevHalf;
+    std::vector<float> hTildeSym;
+    bool               haveHtildePrevHalf = false;
+    std::unique_ptr<AiryEWaveFFTW> airy;
+    if (kUseAiryEWave)
+        airy = std::make_unique<AiryEWaveFFTW>(kNx, kNy, kDx);
     const float halfW = 0.5f * kNx * kDx;
     const float halfD = 0.5f * kNy * kDx;
 
@@ -388,7 +402,11 @@ int main() {
         for (int s = 0; s < kSubsteps; ++s) {
             updateBoat(boat, g, window, halfW, halfD, g.dt, manualControl);
             applyBoatForcing(boat, g, halfW, halfD, g.dt);
-            sweStep(g);
+            if (airy)
+                jwCoupledSubstep(g, halfW, halfD, waveDec, *airy, hTildeSym, hTildePrevHalf, haveHtildePrevHalf,
+                                 kGradPenaltyD);
+            else
+                sweStep(g);
         }
 
         {

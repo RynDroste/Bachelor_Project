@@ -35,12 +35,43 @@ add_executable(${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/external/glad/src/glad.c"
 )
 
+# 扩散迭代 × 波长 → 相对波速 CSV（供 tools/plot_diffusion_dispersion.py 作图）
+add_executable(diffusion_dispersion_bench
+    tools/diffusion_dispersion_bench.cpp
+    src/wavedecomposer.cpp
+    src/shallow_water_solver.cpp
+)
+target_include_directories(diffusion_dispersion_bench PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
+)
+
 target_include_directories(${PROJECT_NAME} PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${CMAKE_CURRENT_SOURCE_DIR}/external/glad/include"
+    "${FFTW3F_INCLUDE_DIR}"
 )
 
 find_package(OpenGL REQUIRED)
+
+# FFTW single precision (Algorithm 2 / eWave)
+find_path(FFTW3F_INCLUDE_DIR fftw3.h
+    PATH_SUFFIXES fftw3
+    PATHS
+        /opt/homebrew/include
+        /usr/local/include
+        /usr/include
+)
+find_library(FFTW3F_LIBRARY NAMES fftw3f
+    PATHS
+        /opt/homebrew/lib
+        /usr/local/lib
+        /usr/lib/x86_64-linux-gnu
+        /usr/lib
+)
+if(NOT FFTW3F_INCLUDE_DIR OR NOT FFTW3F_LIBRARY)
+    message(FATAL_ERROR
+        "FFTW3f not found (need fftw3.h + libfftw3f). macOS: brew install fftw")
+endif()
 
 # GLFW: prefer system installation, fallback to bundled external/glfw
 find_package(glfw3 CONFIG QUIET)
@@ -77,4 +108,5 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     ${GLFW_TARGET}
     ${GLM_TARGET}
     OpenGL::GL
+    ${FFTW3F_LIBRARY}
 )

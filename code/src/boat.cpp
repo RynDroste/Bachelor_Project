@@ -13,10 +13,12 @@ namespace {
 constexpr float kG            = 9.81f;
 constexpr float kDryEps       = 1e-4f;
 constexpr float kMaxSpeed     = 8.f;
-constexpr float kForcingScale = 4.16f;
+constexpr float kForcingScale = 8.5f;
 constexpr float kTurnGain     = 1.2f;
-// Gaussian falloff in normalized hull coords (nx^2+ny^2); larger = tighter footprint
-constexpr float kGaussInvScale = 3.0f;
+// Anisotropic Gaussian in hull frame: exp(-(ax*nx^2 + ay*ny^2)), nx=lx/halfL, ny=ly/halfWb
+// Keep ax modest so bow/stern tips still get forcing (large |nx| was starving the bow visually).
+constexpr float kGaussInvScaleAlong  = 0.95f;
+constexpr float kGaussInvScaleAcross = 5.5f;
 
 float sampleH(const Grid& g, int i, int j) {
     i = std::clamp(i, 0, g.NX - 1);
@@ -172,8 +174,9 @@ void applyBoatForcing(Boat& boat, Grid& g, float halfW, float halfD, float dt) {
 
             const float nx = lx / std::max(halfL, 1e-4f);
             const float ny = ly / std::max(halfWb, 1e-4f);
-            const float r2 = nx * nx + ny * ny;
-            const float shapeW = std::exp(-kGaussInvScale * r2);
+            const float q =
+                kGaussInvScaleAlong * nx * nx + kGaussInvScaleAcross * ny * ny;
+            const float shapeW = std::exp(-q);
             if (shapeW < 1e-5f)
                 continue;
 
@@ -184,20 +187,34 @@ void applyBoatForcing(Boat& boat, Grid& g, float halfW, float halfD, float dt) {
             const float speedAbs = std::abs(boat.speed);
             float froude = speedAbs / std::sqrt(std::max(kG * hLoc, 1e-6f));
             float forcing = boat.draft * speedAbs * shapeW * kForcingScale;
-            forcing *= (0.7f + 0.15f * std::min(froude, 2.5f));
-            forcing *= 0.35f + 0.65f * (nx * nx);
+            forcing *= (0.82f + 0.22f * std::min(froude, 2.5f));
 
-            const float dFlux = forcing * dt;
+            // Motion-relative bow/stern: lx>0 is geometric bow; flip when reversing so
+            // "bow" is always upstream along velocity. Previously only a downstream
+            // momentum sink was applied — that favors a stern wake, not bow pile-up.
+            const float nMotion =
+                (lx * std::copysign(1.f, boat.speed)) / std::max(halfL, 1e-4f);
+            const float sternBlend = std::clamp(0.5f - 0.5f * nMotion, 0.f, 1.f);
+            const float bowBlend = std::clamp(0.5f + 0.5f * nMotion, 0.f, 1.f);
 
-            if (dirX >= 0.f)
-                g.QX(i + 1, j) -= dirX * dFlux;
-            else
-                g.QX(i, j) -= dirX * dFlux;
+            const float dStern = forcing * sternBlend * dt;
+            const float dBow = forcing * bowBlend * dt;
 
-            if (dirZ >= 0.f)
-                g.QY(i, j + 1) -= dirZ * dFlux;
-            else
-                g.QY(i, j) -= dirZ * dFlux;
+            if (dirX >= 0.f) {
+                g.QX(i + 1, j) -= dirX * dStern;
+                g.QX(i, j) += dirX * dBow;
+            } else {
+                g.QX(i, j) -= dirX * dStern;
+                g.QX(i + 1, j) += dirX * dBow;
+            }
+
+            if (dirZ >= 0.f) {
+                g.QY(i, j + 1) -= dirZ * dStern;
+                g.QY(i, j) += dirZ * dBow;
+            } else {
+                g.QY(i, j) -= dirZ * dStern;
+                g.QY(i, j + 1) += dirZ * dBow;
+            }
         }
     }
 }

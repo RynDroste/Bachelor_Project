@@ -23,22 +23,54 @@ constexpr float kDt = 1.0f / 120.0f;
 constexpr int   kSubsteps = 2;
 // false: Stelling & Duinmeijer only (sweStep); true: full J&W (decompose, SWE, Airy, transport, recombine)
 constexpr bool  kJwCoupledStep = true;
-constexpr float kGradPenaltyD = 0.25f; // paper Eq. (13): d = 1/100
+constexpr float kGradPenaltyD = 0.25f; 
 constexpr bool  kVsync          = true; // true: FPS capped at monitor refresh (~60/120)
 // J&W wave low-pass diffusion iterations per substep (header default was 128; lower = much faster).
 constexpr int   kJwDiffuseIters = 8;
 
 static const char* kVertSrc = R"GLSL(
 #version 330 core
-layout (location = 0) in vec3 aPos;
-layout (location = 1) in float aDepth;
+// Static per-vertex corner indices (cell-corner grid); H/B from textures (GPU height field).
+layout (location = 0) in vec2 aCornerIJ;
 uniform mat4 uMVP;
+uniform float uDx;
+uniform float uHalfW;
+uniform float uHalfD;
+uniform sampler2D uH;
+uniform sampler2D uB;
 out vec3 vWorldPos;
 out float vDepth;
 void main() {
-    vWorldPos = aPos;
-    vDepth = aDepth;
-    gl_Position = uMVP * vec4(aPos, 1.0);
+    int vi = int(aCornerIJ.x + 0.0001);
+    int vj = int(aCornerIJ.y + 0.0001);
+    ivec2 sz = textureSize(uH, 0);
+    int NX = sz.x;
+    int NY = sz.y;
+    float sumSurf = 0.0;
+    float sumH = 0.0;
+    int cntSurf = 0;
+    int cntH = 0;
+    for (int di = -1; di <= 0; ++di) {
+        for (int dj = -1; dj <= 0; ++dj) {
+            int ci = vi + di;
+            int cj = vj + dj;
+            if (ci >= 0 && ci < NX && cj >= 0 && cj < NY) {
+                float hv = texelFetch(uH, ivec2(ci, cj), 0).r;
+                float bv = texelFetch(uB, ivec2(ci, cj), 0).r;
+                sumSurf += bv + hv;
+                sumH += hv;
+                cntSurf++;
+                cntH++;
+            }
+        }
+    }
+    float y = cntSurf > 0 ? sumSurf / float(cntSurf) : 0.0;
+    float hAvg = cntH > 0 ? sumH / float(cntH) : 0.0;
+    float wx = float(vi) * uDx - uHalfW;
+    float wz = float(vj) * uDx - uHalfD;
+    vWorldPos = vec3(wx, y, wz);
+    vDepth = hAvg;
+    gl_Position = uMVP * vec4(vWorldPos, 1.0);
 }
 )GLSL";
 
@@ -133,55 +165,42 @@ GLuint makeProgram(const char* vs, const char* fs) {
     return p;
 }
 
-float cornerSurfaceY(const Grid& g, int vi, int vj) {
-    float s = 0.f;
-    int   n = 0;
-    for (int di = -1; di <= 0; ++di) {
-        for (int dj = -1; dj <= 0; ++dj) {
-            int ci = vi + di;
-            int cj = vj + dj;
-            if (ci >= 0 && ci < g.NX && cj >= 0 && cj < g.NY) {
-                s += g.B(ci, cj) + g.H(ci, cj);
-                ++n;
-            }
-        }
-    }
-    return n ? s / static_cast<float>(n) : 0.f;
-}
-
-float cornerAvgH(const Grid& g, int vi, int vj) {
-    float s = 0.f;
-    int   n = 0;
-    for (int di = -1; di <= 0; ++di) {
-        for (int dj = -1; dj <= 0; ++dj) {
-            int ci = vi + di;
-            int cj = vj + dj;
-            if (ci >= 0 && ci < g.NX && cj >= 0 && cj < g.NY) {
-                s += g.H(ci, cj);
-                ++n;
-            }
-        }
-    }
-    return n ? s / static_cast<float>(n) : 0.f;
-}
-
-void fillWaterMesh(const Grid& g, float halfW, float halfD, std::vector<float>& interleaved) {
-    const int vx = g.NX + 1;
-    const int vz = g.NY + 1;
-    interleaved.resize(static_cast<size_t>(vx * vz * 4));
+void buildWaterCornerIJ(int nx, int ny, std::vector<float>& out) {
+    const int vx = nx + 1;
+    const int vz = ny + 1;
+    out.resize(static_cast<size_t>(vx * vz * 2));
     size_t k = 0;
     for (int j = 0; j < vz; ++j) {
         for (int i = 0; i < vx; ++i) {
-            float x = i * g.dx - halfW;
-            float z = j * g.dx - halfD;
-            float y = cornerSurfaceY(g, i, j);
-            float h = cornerAvgH(g, i, j);
-            interleaved[k++] = x;
-            interleaved[k++] = y;
-            interleaved[k++] = z;
-            interleaved[k++] = h;
+            out[k++] = static_cast<float>(i);
+            out[k++] = static_cast<float>(j);
         }
     }
+}
+
+void allocGridTextures(int nx, int ny, GLuint& texH, GLuint& texB) {
+    glGenTextures(1, &texH);
+    glGenTextures(1, &texB);
+    for (int pass = 0; pass < 2; ++pass) {
+        const GLuint t = (pass == 0) ? texH : texB;
+        glBindTexture(GL_TEXTURE_2D, t);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F, nx, ny, 0, GL_RED, GL_FLOAT, nullptr);
+    }
+    glBindTexture(GL_TEXTURE_2D, 0);
+}
+
+void uploadGridTextures(const Grid& g, GLuint texH, GLuint texB) {
+    const int nx = g.NX;
+    const int ny = g.NY;
+    glBindTexture(GL_TEXTURE_2D, texH);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, nx, ny, GL_RED, GL_FLOAT, g.h.data());
+    glBindTexture(GL_TEXTURE_2D, texB);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, nx, ny, GL_RED, GL_FLOAT, g.terrain.data());
+    glBindTexture(GL_TEXTURE_2D, 0);
 }
 
 void buildGridIndices(int nx, int ny, std::vector<unsigned>& idx) {
@@ -326,6 +345,11 @@ int main() {
     GLint locMVP = glGetUniformLocation(prog, "uMVP");
     GLint locLight = glGetUniformLocation(prog, "uLightDir");
     GLint locWaterAlpha = glGetUniformLocation(prog, "uAlpha");
+    GLint locDx = glGetUniformLocation(prog, "uDx");
+    GLint locHalfW = glGetUniformLocation(prog, "uHalfW");
+    GLint locHalfD = glGetUniformLocation(prog, "uHalfD");
+    GLint locTexH = glGetUniformLocation(prog, "uH");
+    GLint locTexB = glGetUniformLocation(prog, "uB");
 
     Grid g(kNx, kNy, kDx, kDt);
     WaveDecomposition waveDec;
@@ -347,7 +371,11 @@ int main() {
 
     std::vector<unsigned> indices;
     buildGridIndices(kNx, kNy, indices);
-    std::vector<float> vertices;
+    std::vector<float> waterCornerIJ;
+    buildWaterCornerIJ(kNx, kNy, waterCornerIJ);
+
+    GLuint texH = 0, texB = 0;
+    allocGridTextures(kNx, kNy, texH, texB);
 
     GLuint vao = 0, vbo = 0, ebo = 0;
     glGenVertexArrays(1, &vao);
@@ -355,16 +383,14 @@ int main() {
     glGenBuffers(1, &ebo);
     glBindVertexArray(vao);
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferData(GL_ARRAY_BUFFER, 0, nullptr, GL_DYNAMIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(waterCornerIJ.size() * sizeof(float)), waterCornerIJ.data(),
+                 GL_STATIC_DRAW);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER,
                  static_cast<GLsizeiptr>(indices.size() * sizeof(unsigned)),
                  indices.data(), GL_STATIC_DRAW);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 4 * sizeof(float), reinterpret_cast<void*>(0));
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), reinterpret_cast<void*>(0));
     glEnableVertexAttribArray(0);
-    glVertexAttribPointer(1, 1, GL_FLOAT, GL_FALSE, 4 * sizeof(float),
-                          reinterpret_cast<void*>(3 * sizeof(float)));
-    glEnableVertexAttribArray(1);
     glBindVertexArray(0);
 
     GLuint boatProg = makeProgram(kBoatVert, kBoatFrag);
@@ -399,7 +425,6 @@ int main() {
 
     double fpsPrevT = glfwGetTime();
     float  fpsShown = 0.f;
-    GLsizeiptr waterVboBytes = 0;
 
     while (!glfwWindowShouldClose(window)) {
         if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
@@ -416,15 +441,7 @@ int main() {
                 sweStep(g);
         }
 
-        fillWaterMesh(g, halfW, halfD, vertices);
-        glBindBuffer(GL_ARRAY_BUFFER, vbo);
-        const GLsizeiptr vbytes = static_cast<GLsizeiptr>(vertices.size() * sizeof(float));
-        if (waterVboBytes != vbytes) {
-            waterVboBytes = vbytes;
-            glBufferData(GL_ARRAY_BUFFER, vbytes, vertices.data(), GL_DYNAMIC_DRAW);
-        } else {
-            glBufferSubData(GL_ARRAY_BUFFER, 0, vbytes, vertices.data());
-        }
+        uploadGridTextures(g, texH, texB);
 
         float aspect = frame.fbH > 0 ? static_cast<float>(frame.fbW) / static_cast<float>(frame.fbH) : 1.f;
         const float ang = 0.85f;  // fixed azimuth (no orbit)
@@ -466,6 +483,22 @@ int main() {
         glUniform3fv(locLight, 1, glm::value_ptr(lightDir));
         if (locWaterAlpha >= 0)
             glUniform1f(locWaterAlpha, 0.84f);
+        if (locDx >= 0)
+            glUniform1f(locDx, kDx);
+        if (locHalfW >= 0)
+            glUniform1f(locHalfW, halfW);
+        if (locHalfD >= 0)
+            glUniform1f(locHalfD, halfD);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, texH);
+        if (locTexH >= 0)
+            glUniform1i(locTexH, 0);
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, texB);
+        if (locTexB >= 0)
+            glUniform1i(locTexB, 1);
+        glActiveTexture(GL_TEXTURE0);
+
         glBindVertexArray(vao);
         glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(indices.size()), GL_UNSIGNED_INT, nullptr);
         glBindVertexArray(0);
@@ -496,6 +529,8 @@ int main() {
     glDeleteProgram(prog);
     if (boatProg)
         glDeleteProgram(boatProg);
+    glDeleteTextures(1, &texH);
+    glDeleteTextures(1, &texB);
     glDeleteBuffers(1, &boatVbo);
     glDeleteVertexArrays(1, &boatVao);
     glDeleteBuffers(1, &vbo);

@@ -45,5 +45,5 @@ struct Grid {
 // Output: qx, qy at t+dt; h at t+3dt/2
 void sweStep(Grid& g);
 
-// 域边界、干湿岸 — J&W 合并 bar+tilde 后需再施加一次
+// Domain boundaries and wet/dry; apply again after J&W bar+tilde merge
 void sweApplyBoundaryConditions(Grid& g);

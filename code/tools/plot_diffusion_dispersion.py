@@ -1,13 +1,10 @@
 #!/usr/bin/env python3
 """
-读取 diffusion_dispersion_bench 生成的 CSV，绘制
-  x: Wavelength (m)
-  y: Relative wave speed
-四条曲线对比扩散迭代 8 / 16 / 32 / 128。
+Plot diffusion_dispersion_bench CSV: x = wavelength (m), y = relative wave speed.
+Curves: 0 / 8 / 16 / 32 / 128 diffusion iterations.
 
-优先使用 matplotlib 生成 PNG；若未安装则生成 SVG（无第三方依赖）。
+Uses matplotlib for PNG if available; otherwise writes SVG (stdlib only).
 
-用法:
   ./diffusion_dispersion_bench > build/diffusion_dispersion.csv
   python3 tools/plot_diffusion_dispersion.py build/diffusion_dispersion.csv -o build/diffusion_dispersion.png
   python3 tools/plot_diffusion_dispersion.py build/diffusion_dispersion.csv -o build/diffusion_dispersion.svg
@@ -38,8 +35,8 @@ def load_csv(path: Path) -> dict[int, list[tuple[float, float]]]:
 def plot_matplotlib(data: dict[int, list[tuple[float, float]]], out: Path) -> None:
     import matplotlib.pyplot as plt
 
-    niters = [8, 16, 32, 128]
-    colors = ["#c0392b", "#7f8c8d", "#e67e22", "#2980b9"]
+    niters = [0, 8, 16, 32, 128]
+    colors = ["#2c3e50", "#c0392b", "#7f8c8d", "#e67e22", "#2980b9"]
     plt.figure(figsize=(8.5, 5.0))
     for n, c in zip(niters, colors):
         if n not in data:
@@ -69,9 +66,9 @@ def plot_matplotlib(data: dict[int, list[tuple[float, float]]], out: Path) -> No
 
 
 def plot_svg(data: dict[int, list[tuple[float, float]]], out: Path) -> None:
-    """无 matplotlib 时用 SVG 折线（同一坐标系）。"""
-    niters = [8, 16, 32, 128]
-    colors = ["#c0392b", "#7f8c8d", "#e67e22", "#2980b9"]
+    """Fallback: polyline SVG in the same axes (no matplotlib)."""
+    niters = [0, 8, 16, 32, 128]
+    colors = ["#2c3e50", "#c0392b", "#7f8c8d", "#e67e22", "#2980b9"]
     W, H = 900, 520
     margin_l, margin_r, margin_t, margin_b = 72, 40, 48, 56
     plot_w = W - margin_l - margin_r
@@ -79,7 +76,7 @@ def plot_svg(data: dict[int, list[tuple[float, float]]], out: Path) -> None:
 
     all_pts = [p for n in niters if n in data for p in data[n]]
     if not all_pts:
-        raise SystemExit("CSV 中无数据")
+        raise SystemExit("no data in CSV")
     xs_all = [p[0] for p in all_pts]
     ys_all = [p[1] for p in all_pts]
     x0, x1 = min(xs_all), max(xs_all)
@@ -216,7 +213,7 @@ def main() -> None:
     except ImportError:
         svg_path = out.with_suffix(".svg")
         plot_svg(data, svg_path)
-        print(f"matplotlib 未安装，已改为 SVG: {svg_path}")
+        print(f"matplotlib not installed; wrote SVG: {svg_path}")
 
 
 if __name__ == "__main__":

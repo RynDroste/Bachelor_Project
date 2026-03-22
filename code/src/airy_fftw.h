@@ -15,9 +15,9 @@ public:
     AiryEWaveFFTW(AiryEWaveFFTW&&)                 = delete;
     AiryEWaveFFTW& operator=(AiryEWaveFFTW&&)      = delete;
 
-    // h_tilde_sym: 与 q 对齐的时刻 t 上的 tilde 水深（论文用 (h^{t-Δt/2}+h^{t+Δt/2})/2）
-    // h_bar: 每格平滑水深，用于 ω=√(gk tanh(kh̄)) 的多档插值
-    // qx_tilde / qy_tilde: 交错网格通量，原地更新
+    // h_tilde_sym: tilde depth at time t aligned with q (paper: average of half-steps)
+    // h_bar: smoothed depth per cell for piecewise omega = sqrt(g k tanh(k h_bar))
+    // qx_tilde / qy_tilde: staggered-face fluxes, updated in place
     void step(float dt, float g,
               const float* h_tilde_sym,
               const float* h_bar,

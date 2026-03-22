@@ -35,7 +35,7 @@ add_executable(${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/external/glad/src/glad.c"
 )
 
-# 扩散迭代 × 波长 → 相对波速 CSV（供 tools/plot_diffusion_dispersion.py 作图）
+# diffusion_dispersion_bench: CSV of relative phase speed vs wavelength (plot with tools/plot_diffusion_dispersion.py)
 add_executable(diffusion_dispersion_bench
     tools/diffusion_dispersion_bench.cpp
     src/wavedecomposer.cpp

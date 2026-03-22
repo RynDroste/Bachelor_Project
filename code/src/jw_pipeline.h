@@ -1,4 +1,4 @@
-// Jeschke & Wojtan 2023 — Algorithm 1 单步子步：分解 → bulk(SWE) → surface(Airy) → 输运 → 合成
+// Jeschke & Wojtan 2023 — Algorithm 1 one substep: decompose, bulk SWE, surface Airy, transport, recombine
 
 #pragma once
 

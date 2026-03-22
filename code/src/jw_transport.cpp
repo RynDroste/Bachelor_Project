@@ -230,7 +230,7 @@ void jwTransportSurface(WaveDecomposition& dec,
         }
     }
 
-    // ----- Alg. 4: tilde h（仅用 bar^{t+Δt} 算 ∇·ū）-----
+    // Alg. 4: tilde h update using divergence of u_bar from bar^{t+dt} only
     std::vector<float> hs = dec.h_tilde;
     for (int j = 0; j < ny; ++j) {
         for (int i = 0; i < nx; ++i) {

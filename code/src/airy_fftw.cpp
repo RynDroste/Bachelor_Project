@@ -244,7 +244,7 @@ void AiryEWaveFFTW::step(float dt, float g,
             im.spatialQy[d][kk] = im.specWork[kk][0] * invN;
     }
 
-    // Spatial blend by local h̄ (论文 §4.3)
+    // Spatial blend by local h_bar (paper Sec. 4.3)
     for (int j = 0; j < ny; ++j) {
         for (int i = 0; i < nx; ++i) {
             const int   idx  = j * nx + i;

@@ -19,6 +19,6 @@ struct WaveDecomposition {
 };
 
 // d_grad_penalty: d in α = (h²/64) * exp(-d * |∇h|²).
-// n_diffusion_iters: 显式扩散子步数（论文 Fig.9 对比 8 / 16 / 32 / 128）。
+// n_diffusion_iters: explicit diffusion substeps (paper Fig.9 uses 8/16/32/128); 0 = no diffusion.
 void waveDecompose(const Grid& g, float d_grad_penalty, int n_diffusion_iters, WaveDecomposition& out);
-void waveDecompose(const Grid& g, float d_grad_penalty, WaveDecomposition& out); // 默认 128 次
+void waveDecompose(const Grid& g, float d_grad_penalty, WaveDecomposition& out); // default 128 iterations

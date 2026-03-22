@@ -120,7 +120,8 @@ void waveDecompose(const Grid& g, float d_grad_penalty, WaveDecomposition& out) 
 }
 
 void waveDecompose(const Grid& g, float d_grad_penalty, int n_diffusion_iters, WaveDecomposition& out) {
-    const int nIter = std::max(1, n_diffusion_iters);
+    // nIter=0: no diffusion; h_bar=h, q_bar=q (pure SWE limit)
+    const int nIter = std::max(0, n_diffusion_iters);
     std::vector<float> alpha_cell;
     computeAlphaFromH(g, d_grad_penalty, alpha_cell);
 

@@ -1,6 +1,6 @@
 // Jeschke & Wojtan 2023 — Algorithm 2: Airy surface waves via FFT + exponential integrator (eWave).
 // 2D, cell-centered spectral ops; qx/qy staggered ↔ cell average for FFT, then scatter back.
-// FFT: cuFFT cufftPlan2d C2C on device; spectral eWave + depth blend in airy_cuda_kernels.cu; host only stages faces.
+// FFT: cuFFT + spectral eWave + blend + staggered<->cell flux maps on device; host only uploads/downloads tilde fields.
 
 #pragma once
 

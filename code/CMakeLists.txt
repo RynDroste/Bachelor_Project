@@ -36,6 +36,7 @@ add_executable(${PROJECT_NAME}
     ${APP_SOURCES}
     "${CMAKE_CURRENT_SOURCE_DIR}/external/glad/src/glad.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/airy_cuda_kernels.cu"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/wave_decompose_gpu.cu"
 )
 
 set_target_properties(${PROJECT_NAME} PROPERTIES

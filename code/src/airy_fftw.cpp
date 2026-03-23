@@ -3,7 +3,6 @@
 #include "airy_cuda_kernels.hpp"
 
 #include <cstdio>
-#include <vector>
 
 #include <cuda_runtime.h>
 #include <cufft.h>
@@ -48,12 +47,11 @@ struct AiryEWaveFFTW::Impl {
     float*         d_h_bar = nullptr;
     float*         d_qxc = nullptr;
     float*         d_qyc = nullptr;
+    float*         d_qx_face = nullptr; // (nx+1)*ny staggered tilde qx
+    float*         d_qy_face = nullptr; // nx*(ny+1) staggered tilde qy
 
     cufftHandle planFwd = 0;
     cufftHandle planInv = 0;
-
-    std::vector<float> qxc;
-    std::vector<float> qyc;
 
     ~Impl() {
         if (planFwd)
@@ -69,6 +67,8 @@ struct AiryEWaveFFTW::Impl {
         cudaFree(d_h_bar);
         cudaFree(d_qxc);
         cudaFree(d_qyc);
+        cudaFree(d_qx_face);
+        cudaFree(d_qy_face);
     }
 };
 
@@ -83,10 +83,9 @@ AiryEWaveFFTW::AiryEWaveFFTW(int nx, int ny, float dx)
     im.nx      = nx;
     im.ny      = ny;
     im.dx      = dx;
-    const size_t n = static_cast<size_t>(nx) * static_cast<size_t>(ny);
-
-    im.qxc.resize(n);
-    im.qyc.resize(n);
+    const size_t n   = static_cast<size_t>(nx) * static_cast<size_t>(ny);
+    const size_t nqx = static_cast<size_t>(nx + 1) * static_cast<size_t>(ny);
+    const size_t nqy = static_cast<size_t>(nx) * static_cast<size_t>(ny + 1);
 
     CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&im.d_real), n * sizeof(float)));
     CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&im.d_hatH), n * sizeof(cufftComplex)));
@@ -97,8 +96,9 @@ AiryEWaveFFTW::AiryEWaveFFTW(int nx, int ny, float dx)
     CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&im.d_h_bar), n * sizeof(float)));
     CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&im.d_qxc), n * sizeof(float)));
     CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&im.d_qyc), n * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&im.d_qx_face), nqx * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&im.d_qy_face), nqy * sizeof(float)));
 
-    // Row-major idx = j*nx+i, i fastest -> cufftPlan2d(nx, ny, CUFFT_C2C)
     CUFFT_CHECK(cufftPlan2d(&im.planFwd, nx, ny, CUFFT_C2C));
     CUFFT_CHECK(cufftPlan2d(&im.planInv, nx, ny, CUFFT_C2C));
 }
@@ -117,7 +117,9 @@ void AiryEWaveFFTW::step(float dt, float g,
     const float dy   = dx;
     const int   n    = nx * ny;
     const float invN = 1.f / static_cast<float>(n);
-    const size_t nBytesF = static_cast<size_t>(n) * sizeof(float);
+    const size_t nBytesF  = static_cast<size_t>(n) * sizeof(float);
+    const size_t nBytesQx = static_cast<size_t>(nx + 1) * static_cast<size_t>(ny) * sizeof(float);
+    const size_t nBytesQy = static_cast<size_t>(nx) * static_cast<size_t>(ny + 1) * sizeof(float);
 
     float* d_sx0 = im.d_spatial + 0u * static_cast<size_t>(n);
     float* d_sx1 = im.d_spatial + 1u * static_cast<size_t>(n);
@@ -128,27 +130,21 @@ void AiryEWaveFFTW::step(float dt, float g,
     float* d_sy2 = im.d_spatial + 6u * static_cast<size_t>(n);
     float* d_sy3 = im.d_spatial + 7u * static_cast<size_t>(n);
 
-    for (int j = 0; j < ny; ++j) {
-        for (int i = 0; i < nx; ++i) {
-            const int iq = i + j * (nx + 1);
-            im.qxc[j * nx + i] = 0.5f * (qx_tilde[iq] + qx_tilde[iq + 1]);
-            const int ir = i + j * nx;
-            im.qyc[j * nx + i] = 0.5f * (qy_tilde[ir] + qy_tilde[ir + nx]);
-        }
-    }
+    CUDA_CHECK(cudaMemcpy(im.d_qx_face, qx_tilde, nBytesQx, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(im.d_qy_face, qy_tilde, nBytesQy, cudaMemcpyHostToDevice));
+    airy_cuda_launch_face_to_cell(im.d_qx_face, im.d_qy_face, im.d_qxc, im.d_qyc, nx, ny, 0);
+    CUDA_POST_KERNEL();
 
     CUDA_CHECK(cudaMemcpy(im.d_real, h_tilde_sym, nBytesF, cudaMemcpyHostToDevice));
     airy_cuda_launch_real_to_complex(im.d_real, im.d_hatH, n, 0);
     CUDA_POST_KERNEL();
     CUFFT_CHECK(cufftExecC2C(im.planFwd, im.d_hatH, im.d_hatH, CUFFT_FORWARD));
 
-    CUDA_CHECK(cudaMemcpy(im.d_real, im.qxc.data(), nBytesF, cudaMemcpyHostToDevice));
-    airy_cuda_launch_real_to_complex(im.d_real, im.d_hatQx, n, 0);
+    airy_cuda_launch_real_to_complex(im.d_qxc, im.d_hatQx, n, 0);
     CUDA_POST_KERNEL();
     CUFFT_CHECK(cufftExecC2C(im.planFwd, im.d_hatQx, im.d_hatQx, CUFFT_FORWARD));
 
-    CUDA_CHECK(cudaMemcpy(im.d_real, im.qyc.data(), nBytesF, cudaMemcpyHostToDevice));
-    airy_cuda_launch_real_to_complex(im.d_real, im.d_hatQy, n, 0);
+    airy_cuda_launch_real_to_complex(im.d_qyc, im.d_hatQy, n, 0);
     CUDA_POST_KERNEL();
     CUFFT_CHECK(cufftExecC2C(im.planFwd, im.d_hatQy, im.d_hatQy, CUFFT_FORWARD));
 
@@ -175,24 +171,11 @@ void AiryEWaveFFTW::step(float dt, float g,
                            nx, ny, 0);
     CUDA_POST_KERNEL();
 
-    CUDA_CHECK(cudaMemcpy(im.qxc.data(), im.d_qxc, nBytesF, cudaMemcpyDeviceToHost));
-    CUDA_CHECK(cudaMemcpy(im.qyc.data(), im.d_qyc, nBytesF, cudaMemcpyDeviceToHost));
+    airy_cuda_launch_cell_to_qx_faces(im.d_qxc, im.d_qx_face, nx, ny, 0);
+    CUDA_POST_KERNEL();
+    airy_cuda_launch_cell_to_qy_faces(im.d_qyc, im.d_qy_face, nx, ny, 0);
+    CUDA_POST_KERNEL();
 
-    for (int j = 0; j < ny; ++j) {
-        qx_tilde[0 + j * (nx + 1)] = im.qxc[j * nx + 0];
-        for (int i = 1; i < nx; ++i) {
-            const int iq = i + j * (nx + 1);
-            qx_tilde[iq] = 0.5f * (im.qxc[j * nx + (i - 1)] + im.qxc[j * nx + i]);
-        }
-        qx_tilde[nx + j * (nx + 1)] = im.qxc[j * nx + (nx - 1)];
-    }
-
-    for (int i = 0; i < nx; ++i) {
-        qy_tilde[i + 0 * nx] = im.qyc[0 * nx + i];
-        for (int j = 1; j < ny; ++j) {
-            const int ir = i + j * nx;
-            qy_tilde[ir] = 0.5f * (im.qyc[(j - 1) * nx + i] + im.qyc[j * nx + i]);
-        }
-        qy_tilde[i + ny * nx] = im.qyc[(ny - 1) * nx + i];
-    }
+    CUDA_CHECK(cudaMemcpy(qx_tilde, im.d_qx_face, nBytesQx, cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(qy_tilde, im.d_qy_face, nBytesQy, cudaMemcpyDeviceToHost));
 }

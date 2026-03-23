@@ -1,6 +1,7 @@
 // =============================================================================
 // Wave decomposer — Jeschke & Wojtan-style split of h, q into low-pass (bar)
 // and residual (tilde). Uses free-surface H = h + bed for filtering; α from h.
+// Implementation: CUDA (wave_decompose_gpu.cu); host I/O is Grid in / WaveDecomposition out.
 // =============================================================================
 
 #pragma once

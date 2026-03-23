@@ -301,3 +301,78 @@ void airy_cuda_launch_blend(const float* d_sx0,
     airy_blend_k<<<blocks, threads, 0, stream>>>(d_sx0, d_sx1, d_sx2, d_sx3, d_sy0, d_sy1, d_sy2, d_sy3, d_h_bar, d_qxc,
                                                  d_qyc, nx, ny);
 }
+
+__global__ void airy_face_to_cell_k(const float* __restrict__ qx_face,
+                                    const float* __restrict__ qy_face,
+                                    float* __restrict__ qxc,
+                                    float* __restrict__ qyc,
+                                    int nx,
+                                    int ny) {
+    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    const int n   = nx * ny;
+    if (idx >= n)
+        return;
+    const int i = idx % nx;
+    const int j = idx / nx;
+    const int iq = i + j * (nx + 1);
+    qxc[idx]     = 0.5f * (qx_face[iq] + qx_face[iq + 1]);
+    const int ir = idx;
+    qyc[idx]     = 0.5f * (qy_face[ir] + qy_face[ir + nx]);
+}
+
+__global__ void airy_cell_to_qx_faces_k(const float* __restrict__ qxc, float* __restrict__ qx_face, int nx, int ny) {
+    const int tid    = blockIdx.x * blockDim.x + threadIdx.x;
+    const int nfaces = (nx + 1) * ny;
+    if (tid >= nfaces)
+        return;
+    const int fi = tid % (nx + 1);
+    const int fj = tid / (nx + 1);
+    if (fi == 0)
+        qx_face[tid] = qxc[0 + fj * nx];
+    else if (fi == nx)
+        qx_face[tid] = qxc[(nx - 1) + fj * nx];
+    else
+        qx_face[tid] = 0.5f * (qxc[(fi - 1) + fj * nx] + qxc[fi + fj * nx]);
+}
+
+__global__ void airy_cell_to_qy_faces_k(const float* __restrict__ qyc, float* __restrict__ qy_face, int nx, int ny) {
+    const int tid    = blockIdx.x * blockDim.x + threadIdx.x;
+    const int nfaces = nx * (ny + 1);
+    if (tid >= nfaces)
+        return;
+    const int i      = tid % nx;
+    const int j_face = tid / nx;
+    if (j_face == 0)
+        qy_face[tid] = qyc[0 * nx + i];
+    else if (j_face == ny)
+        qy_face[tid] = qyc[(ny - 1) * nx + i];
+    else
+        qy_face[tid] = 0.5f * (qyc[(j_face - 1) * nx + i] + qyc[j_face * nx + i]);
+}
+
+void airy_cuda_launch_face_to_cell(const float* d_qx_face,
+                                   const float* d_qy_face,
+                                   float* d_qxc,
+                                   float* d_qyc,
+                                   int nx,
+                                   int ny,
+                                   cudaStream_t stream) {
+    const int n       = nx * ny;
+    const int threads = 256;
+    const int blocks  = (n + threads - 1) / threads;
+    airy_face_to_cell_k<<<blocks, threads, 0, stream>>>(d_qx_face, d_qy_face, d_qxc, d_qyc, nx, ny);
+}
+
+void airy_cuda_launch_cell_to_qx_faces(const float* d_qxc, float* d_qx_face, int nx, int ny, cudaStream_t stream) {
+    const int nfaces  = (nx + 1) * ny;
+    const int threads = 256;
+    const int blocks  = (nfaces + threads - 1) / threads;
+    airy_cell_to_qx_faces_k<<<blocks, threads, 0, stream>>>(d_qxc, d_qx_face, nx, ny);
+}
+
+void airy_cuda_launch_cell_to_qy_faces(const float* d_qyc, float* d_qy_face, int nx, int ny, cudaStream_t stream) {
+    const int nfaces  = nx * (ny + 1);
+    const int threads = 256;
+    const int blocks  = (nfaces + threads - 1) / threads;
+    airy_cell_to_qy_faces_k<<<blocks, threads, 0, stream>>>(d_qyc, d_qy_face, nx, ny);
+}

@@ -3,11 +3,6 @@
 Plot diffusion_dispersion_bench CSV: x = wavelength (m), y = relative wave speed.
 Curves: 0 / 8 / 16 / 32 / 128 diffusion iterations.
 
-Uses matplotlib for PNG if available; otherwise writes SVG (stdlib only).
-
-  ./diffusion_dispersion_bench > build/diffusion_dispersion.csv
-  python3 tools/plot_diffusion_dispersion.py build/diffusion_dispersion.csv -o build/diffusion_dispersion.png
-  python3 tools/plot_diffusion_dispersion.py build/diffusion_dispersion.csv -o build/diffusion_dispersion.svg
 """
 
 from __future__ import annotations

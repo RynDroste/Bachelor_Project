@@ -42,6 +42,7 @@ add_executable(${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/external/glad/src/glad.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/airy_cuda_kernels.cu"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/wave_decompose_gpu.cu"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/shallow_water_solver_gpu.cu"
 )
 
 set_target_properties(${PROJECT_NAME} PROPERTIES
@@ -115,6 +116,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
 add_executable(DamSWE
     "${CMAKE_CURRENT_SOURCE_DIR}/src/dam.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/shallow_water_solver.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/shallow_water_solver_gpu.cu"
     "${CMAKE_CURRENT_SOURCE_DIR}/external/glad/src/glad.c"
 )
 
@@ -127,4 +129,5 @@ target_link_libraries(DamSWE PRIVATE
     ${GLFW_TARGET}
     ${GLM_TARGET}
     OpenGL::GL
+    CUDA::cudart
 )

@@ -60,7 +60,7 @@ void jwCoupledSubstep(Grid& g, float halfW, float halfD,
     Grid& gBar1 = *g_barScratch.gBar1;
     assignBarState(gBar0, g, dec);
     assignBarState(gBar1, g, dec);
-    sweStep(gBar1);
+    sweStepGpu(gBar1);
 
     const size_t nh = dec.h_tilde.size();
     if (hTildeSym.size() != nh) {
@@ -94,5 +94,5 @@ void jwCoupledSubstep(Grid& g, float halfW, float halfD,
             g.QY(i, j) = gBar1.QY(i, j) + dec.qy_tilde[i + j * g.NX];
     }
 
-    sweApplyBoundaryConditions(g);
+    sweApplyBoundaryConditionsGpu(g);
 }

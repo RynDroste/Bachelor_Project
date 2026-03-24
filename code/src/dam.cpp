@@ -16,20 +16,19 @@ namespace {
 constexpr int kNx = 256;
 constexpr int kNy = 64;
 constexpr float kDx = 1.0f;
-constexpr float kDt = 1.0f / 60.0f;
+// Slightly conservative vs dx=1 and face CFL cap (see shallow_water_solver_gpu.cu faceSpeedCap_d).
+constexpr float kDt = 1.0f / 120.0f;
 constexpr int kSubsteps = 2;
 constexpr bool kVsync = true;
-constexpr bool kUseSpongeBoundary = true;
-constexpr int kSpongeWidth = 10;
-constexpr float kSpongeStrength = 0.09f;
 constexpr int kWallThicknessCells = 2;
 constexpr int kGapHalfWidthCells = 6;
 // Negative moves wall toward upstream (left), positive toward downstream (right).
 constexpr int kWallCenterOffsetCells = -30;
-constexpr int kSecondWallCenterOffsetCells = -0;
+constexpr int kSecondWallCenterOffsetCells = -4;
 constexpr int kThirdWallCenterOffsetCells = 16;
 constexpr float kWallHeight = 10.f;
-constexpr float kWetDepthEps = 0.03f;
+// Vertex: cell counts as wet if h > this. Lower = thin front visible (matches fragment fade).
+constexpr float kWetDepthEps = 1e-2f;
 constexpr bool kUseCenterGap = true;
 constexpr float kG = 9.81f;
 constexpr float kGapRoundnessXCells = 1.2f;
@@ -37,6 +36,9 @@ constexpr int kGapCount = 3;        // first wall
 constexpr int kSecondGapCount = 1;  // second wall: one centered opening
 constexpr int kThirdGapCount = 0;   // third wall: fully closed
 constexpr int kGapSpacingCells = 18;
+// Second wall breach larger than the first (ellipse half-axes in cell units).
+constexpr float kSecondGapRoundnessXCells = 2.0f;
+constexpr float kSecondGapHalfWidthCells = 11.f;
 constexpr glm::vec3 kFixedCamPos(44.03f, 61.59f, -2.16f);
 constexpr float kFixedCamYawDeg = -180.48f;
 constexpr float kFixedCamPitchDeg = -49.76f;
@@ -61,10 +63,13 @@ void main() {
     ivec2 sz = textureSize(uH, 0);
     int NX = sz.x;
     int NY = sz.y;
+    // Weighted blend instead of hv > eps hard split: reduces stair-steps and spikes where
+    // wet/dry toggles cell-by-cell along a wall (purely mesh/shading; solver unchanged).
     float sumSurf = 0.0;
     float sumH = 0.0;
-    int cntSurf = 0;
-    int cntH = 0;
+    float sumW = 0.0;
+    float wLo = uWetDepthEps * 0.3;
+    float wHi = uWetDepthEps * 1.6;
     for (int di = -1; di <= 0; ++di) {
         for (int dj = -1; dj <= 0; ++dj) {
             int ci = vi + di;
@@ -72,21 +77,18 @@ void main() {
             if (ci >= 0 && ci < NX && cj >= 0 && cj < NY) {
                 float hv = texelFetch(uH, ivec2(ci, cj), 0).r;
                 float bv = texelFetch(uB, ivec2(ci, cj), 0).r;
-                // Do not let dry wall cells lift nearby corner water surface.
-                if (hv > uWetDepthEps) {
-                    sumSurf += bv + hv;
-                    sumH += hv;
-                    cntSurf++;
-                    cntH++;
-                }
+                float w = smoothstep(wLo, wHi, max(hv, 0.0));
+                sumSurf += w * (bv + hv);
+                sumH += w * hv;
+                sumW += w;
             }
         }
     }
     float y = 0.0;
     float hAvg = 0.0;
-    if (cntSurf > 0) {
-        y = sumSurf / float(cntSurf);
-        hAvg = sumH / float(cntH);
+    if (sumW > 1e-6) {
+        y = sumSurf / sumW;
+        hAvg = sumH / sumW;
     } else {
         // Fully dry corner: sample nearby bed only so no phantom water sheet appears.
         float sumBed = 0.0;
@@ -103,7 +105,7 @@ void main() {
         }
         y = (cntBed > 0) ? (sumBed / float(cntBed)) : 0.0;
     }
-    vWetFrac = float(cntSurf) * 0.25;
+    vWetFrac = sumW * 0.25;
     float wx = float(vi) * uDx - uHalfW;
     float wz = float(vj) * uDx - uHalfD;
     vWorldPos = vec3(wx, y, wz);
@@ -122,10 +124,12 @@ uniform float uAlpha;
 uniform float uWetDepthEps;
 out vec4 FragColor;
 void main() {
-    // Discard if corner neighborhood is mostly dry (e.g. under solid dams).
-    if (vDepth < uWetDepthEps || vWetFrac < 0.26) {
+    // Soft edge: avoid a hard horizontal "void" cut when h or wet corner count is marginal.
+    float dFade = smoothstep(0.0, uWetDepthEps * 2.5, max(vDepth, 0.0));
+    float wFade = smoothstep(0.10, 0.30, vWetFrac);
+    float a = uAlpha * dFade * wFade;
+    if (a < 0.012)
         discard;
-    }
     vec3 nx = dFdx(vWorldPos);
     vec3 ny = dFdy(vWorldPos);
     vec3 N = normalize(cross(nx, ny));
@@ -136,7 +140,7 @@ void main() {
     vec3 L = normalize(uLightDir);
     float ndl = max(dot(N, L), 0.0);
     vec3 rgb = base * (0.2 + 0.8 * ndl);
-    FragColor = vec4(rgb, uAlpha);
+    FragColor = vec4(rgb, a);
 }
 )GLSL";
 
@@ -309,8 +313,8 @@ bool isWallSolidCell(int i, int j, int nx, int ny) {
 
         // Rounded openings: multiple ellipses in (x,z) over cell centers.
         const float cx = 0.5f * static_cast<float>(wallI0 + wallI1 - 1);
-        const float rx = std::max(0.75f, kGapRoundnessXCells);
-        const float rz = std::max(1.0f, static_cast<float>(kGapHalfWidthCells));
+        const float rx = std::max(0.75f, wc == 1 ? kSecondGapRoundnessXCells : kGapRoundnessXCells);
+        const float rz = std::max(1.0f, wc == 1 ? kSecondGapHalfWidthCells : static_cast<float>(kGapHalfWidthCells));
         const float centerZ = 0.5f * static_cast<float>(ny - 1);
         const int wallGapCount = (wc == 0) ? kGapCount : (wc == 1 ? kSecondGapCount : kThirdGapCount);
         if (wallGapCount <= 0) {
@@ -356,8 +360,8 @@ void buildDamWallMesh(std::vector<float>& out, int nx, int ny, float dx, float h
 void setupDamInitialState(Grid& g) {
     const int wallCenter = g.NX / 2 + kWallCenterOffsetCells;
     const int wallI0 = wallCenter - kWallThicknessCells / 2;
-    const float hLeft = 7.0f;
-    const float hRight = 3.f;
+    const float hLeft = 4.f;
+    const float hRight = 5e-3f;
     const float transitionCells = 3.0f;
     const float x0 = static_cast<float>(wallI0);
 
@@ -376,40 +380,7 @@ void setupDamInitialState(Grid& g) {
     }
     std::fill(g.qx.begin(), g.qx.end(), 0.0f);
     std::fill(g.qy.begin(), g.qy.end(), 0.0f);
-    sweApplyBoundaryConditions(g);
-}
-
-void applySpongeLayer(Grid& g) {
-    if (!kUseSpongeBoundary) {
-        return;
-    }
-    const int nx = g.NX;
-    const int ny = g.NY;
-    const int w = std::max(1, kSpongeWidth);
-
-    for (int j = 0; j < ny; ++j) {
-        for (int i = 0; i <= nx; ++i) {
-            // Keep left/right boundaries fully reflective; sponge only top/bottom.
-            int d = std::min(j, ny - 1 - j);
-            if (d < w) {
-                const float t = 1.0f - static_cast<float>(d) / static_cast<float>(w);
-                const float damp = std::exp(-kSpongeStrength * t * t);
-                g.QX(i, j) *= damp;
-            }
-        }
-    }
-    for (int j = 0; j <= ny; ++j) {
-        for (int i = 0; i < nx; ++i) {
-            // Keep left/right boundaries fully reflective; sponge only top/bottom.
-            int d = std::min(j, ny - j);
-            if (d < w) {
-                const float t = 1.0f - static_cast<float>(d) / static_cast<float>(w);
-                const float damp = std::exp(-kSpongeStrength * t * t);
-                g.QY(i, j) *= damp;
-            }
-        }
-    }
-    sweApplyBoundaryConditions(g);
+    sweApplyBoundaryConditionsGpu(g);
 }
 
 struct FrameCtx {
@@ -549,9 +520,21 @@ int main() {
         }
 
         for (int s = 0; s < kSubsteps; ++s) {
-            sweStep(g);
-            applySpongeLayer(g);
+            sweStepGpu(g);
             simT += g.dt;
+        }
+
+        static double lastFroudePrintSimT = -1e9;
+        constexpr double kFroudePrintInterval = 0.25;
+        if (simT - lastFroudePrintSimT >= kFroudePrintInterval) {
+            lastFroudePrintSimT = simT;
+            const ShallowWaterDiagnostics diag = gridShallowWaterDiagnostics(g, kG);
+            std::printf(
+                "t=%.3f s  Fr_max=%.4f  |u|@Frmax=%.4f m/s  h@Frmax=%.4f m  |u|_max=%.4f  h_min_wet=%.4f m\n",
+                simT, static_cast<double>(diag.fr_max), static_cast<double>(diag.speed_at_fr_max),
+                static_cast<double>(diag.h_at_fr_max), static_cast<double>(diag.speed_max),
+                static_cast<double>(diag.h_min_wet));
+            std::fflush(stdout);
         }
 
         uploadGridTextures(g, texH, texB);
@@ -599,6 +582,7 @@ int main() {
         glUniform1f(locDx, kDx);
         glUniform1f(locHalfW, halfW);
         glUniform1f(locHalfD, halfD);
+        // Same kWetDepthEps: vertex wet mask; fragment also uses 2.5 * uWetDepthEps for depth fade (kFragSrc).
         glUniform1f(locWetEps, kWetDepthEps);
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, texH);

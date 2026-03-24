@@ -425,6 +425,7 @@ int main() {
 
     double fpsPrevT = glfwGetTime();
     float  fpsShown = 0.f;
+    double simT     = 0.0;
 
     while (!glfwWindowShouldClose(window)) {
         if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
@@ -438,7 +439,21 @@ int main() {
                 jwCoupledSubstep(g, halfW, halfD, waveDec, *airy, hTildeSym, hTildePrevHalf, haveHtildePrevHalf,
                                  kGradPenaltyD, 0.25f, kJwDiffuseIters);
             else
-                sweStep(g);
+                sweStepGpu(g);
+        }
+        simT += kSubsteps * g.dt;
+
+        static double lastFroudePrintSimT = -1e9;
+        constexpr double kFroudePrintInterval = 0.25;
+        if (simT - lastFroudePrintSimT >= kFroudePrintInterval) {
+            lastFroudePrintSimT = simT;
+            const ShallowWaterDiagnostics diag = gridShallowWaterDiagnostics(g, 9.81f);
+            std::printf(
+                "t=%.3f s  Fr_max=%.4f  |u|@Frmax=%.4f m/s  h@Frmax=%.4f m  |u|_max=%.4f  h_min_wet=%.4f m\n",
+                simT, static_cast<double>(diag.fr_max), static_cast<double>(diag.speed_at_fr_max),
+                static_cast<double>(diag.h_at_fr_max), static_cast<double>(diag.speed_max),
+                static_cast<double>(diag.h_min_wet));
+            std::fflush(stdout);
         }
 
         uploadGridTextures(g, texH, texB);

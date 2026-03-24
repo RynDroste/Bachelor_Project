@@ -2,7 +2,6 @@
 
 #include "airy_cuda_kernels.hpp"
 
-#include <cstdio>
 
 #include <cuda_runtime.h>
 #include <cufft.h>
@@ -13,7 +12,6 @@ namespace {
     do {                                                                                                               \
         cudaError_t _e = (x);                                                                                          \
         if (_e != cudaSuccess) {                                                                                       \
-            std::fprintf(stderr, "%s:%d CUDA error: %s\n", __FILE__, __LINE__, cudaGetErrorString(_e));                \
             std::abort();                                                                                              \
         }                                                                                                              \
     } while (0)
@@ -22,7 +20,6 @@ namespace {
     do {                                                                                                               \
         cufftResult _r = (x);                                                                                          \
         if (_r != CUFFT_SUCCESS) {                                                                                     \
-            std::fprintf(stderr, "%s:%d cuFFT error: %d\n", __FILE__, __LINE__, static_cast<int>(_r));               \
             std::abort();                                                                                              \
         }                                                                                                              \
     } while (0)

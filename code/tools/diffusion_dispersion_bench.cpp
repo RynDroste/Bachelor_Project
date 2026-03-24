@@ -1,14 +1,7 @@
-// J&W Fig.9-style sweep: relative phase-speed proxy vs wavelength for several diffusion iteration counts.
-// CSV: niter,wavelength_m,theoretical_phase_speed_m_s,relative_wave_speed
-// theoretical_phase_speed_m_s: Airy c = omega/k at depth h0 (normalization for relative_wave_speed).
-// IC: h = h0 + (eps/sqrt(2))(cos kx + sin kx); at lambda = 2*dx, cos vanishes at cell centers but sin does not.
-// Dual-channel: Ac, As from cos/sin projections; R = hypot(Ac,As); w = Rbar/(Rbar+Rtilde).
-
 #include "shallow_water_solver.h"
 #include "wavedecomposer.h"
 
 #include <cmath>
-#include <cstdio>
 #include <vector>
 
 namespace {
@@ -23,7 +16,7 @@ constexpr int   kNx       = 512;
 constexpr int   kNy       = 8;
 constexpr float kPi       = 3.14159265358979323846f;
 constexpr float kTwoPi   = 2.f * kPi;
-constexpr float kInvSqrt2 = 0.70710678118f; // same RMS scale as single cos with amplitude eps
+constexpr float kInvSqrt2 = 0.70710678118f;
 
 float airyPhaseSpeed(float wavelength, float h0) {
     if (wavelength < 1e-6f)
@@ -73,7 +66,6 @@ float relativeWaveSpeedProxy(float lambda, float wBar) {
     return w * (cSW / cAiry) + (1.f - w) * 1.f;
 }
 
-// Matches wavedecomposer.cpp computeAlphaFromH (flat h => alpha = h^2/64)
 float alphaCellLikeDecomposer(const Grid& g, float d_grad_penalty, int i, int j) {
     constexpr float kEps = 1e-8f;
     const float     dx   = g.dx;
@@ -115,11 +107,8 @@ void fillCosSinPerturbation(Grid& g, float lambda) {
 
 int main() {
     const int jrow = kNy / 2;
-    std::printf("niter,wavelength_m,theoretical_phase_speed_m_s,relative_wave_speed\n");
 
     const int niters[] = {0, 8, 16, 32, 128};
-    float     maxAbsErr128 = 0.f;
-    float     lambdaAtMax128 = 0.f;
 
     for (int niter : niters) {
         for (int step = 0; step <= 32; ++step) {
@@ -132,80 +121,9 @@ int main() {
 
             const float wMix    = wFromDualChannel(dec.h_bar, dec.h_tilde, kNx, jrow, kDx, lambda, kH0);
             const float rel     = relativeWaveSpeedProxy(lambda, wMix);
-            const float cTheory = airyPhaseSpeed(lambda, kH0);
-            std::printf("%d,%.3f,%.6f,%.6f\n", niter, static_cast<double>(lambda),
-                        static_cast<double>(cTheory), static_cast<double>(rel));
-
-            if (niter == 128) {
-                const float e = std::fabs(rel - 1.f);
-                if (e > maxAbsErr128) {
-                    maxAbsErr128   = e;
-                    lambdaAtMax128 = lambda;
-                }
-            }
+            (void) rel;
         }
     }
-
-    // stderr summary (reference magnitudes from paper; not an automated test threshold)
-    Grid gFlat(kNx, kNy, kDx, kDt);
-    for (int j = 0; j < kNy; ++j) {
-        for (int i = 0; i < kNx; ++i) {
-            gFlat.B(i, j) = 0.f;
-            gFlat.H(i, j) = kH0;
-        }
-    }
-    const int   ic      = kNx / 2;
-    const float alpha0  = alphaCellLikeDecomposer(gFlat, kDGrad, ic, jrow);
-    const float alphaTh = kH0 * kH0 / 64.f;
-
-    const float lambdaCut = kTwoPi * kH0;
-    Grid        gCut(kNx, kNy, kDx, kDt);
-    fillCosSinPerturbation(gCut, lambdaCut);
-    WaveDecomposition decCut;
-    waveDecompose(gCut, kDGrad, 128, decCut);
-    const float fracBar128 = barModeEnergyFraction(decCut.h_bar, decCut.h_tilde, kNx, jrow, kDx, lambdaCut, kH0);
-
-    // lambda in [2,30] m: at niter=128, wavelength whose bar mode energy fraction is closest to 0.5
-    float bestHalfLam = 0.f;
-    float bestHalfErr = 1e10f;
-    for (int step = 0; step <= 56; ++step) {
-        const float lambda = 2.f + 0.5f * static_cast<float>(step);
-        Grid        gg(kNx, kNy, kDx, kDt);
-        fillCosSinPerturbation(gg, lambda);
-        WaveDecomposition dd;
-        waveDecompose(gg, kDGrad, 128, dd);
-        const float f = barModeEnergyFraction(dd.h_bar, dd.h_tilde, kNx, jrow, kDx, lambda, kH0);
-        const float e = std::fabs(f - 0.5f);
-        if (e < bestHalfErr) {
-            bestHalfErr = e;
-            bestHalfLam = lambda;
-        }
-    }
-
-    Grid gShort(kNx, kNy, kDx, kDt);
-    fillCosSinPerturbation(gShort, 2.f);
-    WaveDecomposition d0;
-    waveDecompose(gShort, kDGrad, 0, d0);
-    const float w0     = wFromDualChannel(d0.h_bar, d0.h_tilde, kNx, jrow, kDx, 2.f, kH0);
-    const float rel0_2 = relativeWaveSpeedProxy(2.f, w0);
-
-    std::fprintf(stderr,
-                 "alpha check (flat h=h0, cell center): alpha=%.6g  h^2/64=%.6g  rel err %.2e\n",
-                 static_cast<double>(alpha0), static_cast<double>(alphaTh),
-                 static_cast<double>(std::fabs(alpha0 - alphaTh) / alphaTh));
-    std::fprintf(stderr,
-                 "at lambda=2*pi*h ~ %.4f m: bar energy fraction Rb^2/(Rb^2+Rt^2) (niter=128) -> %.4f\n"
-                 "  (paper 'half-half' is continuous cutoff ~2*pi*h; discrete 128-step projection need not be 0.5)\n",
-                 static_cast<double>(lambdaCut), static_cast<double>(fracBar128));
-    std::fprintf(stderr,
-                 "niter=128: lambda* in [2,30]m closest to half bar energy: %.3f m (|f-0.5|=%.4f)\n",
-                 static_cast<double>(bestHalfLam), static_cast<double>(bestHalfErr));
-    std::fprintf(stderr,
-                 "niter=128: max|relative_wave_speed-1| = %.4f (~%.2f%%) at lambda=%.3f m (paper Fig.9 ~8%% scale)\n",
-                 static_cast<double>(maxAbsErr128), static_cast<double>(100.f * maxAbsErr128),
-                 static_cast<double>(lambdaAtMax128));
-    std::fprintf(stderr, "niter=0, lambda=2 m: relative_wave_speed=%.4f (short waves should be >> 1)\n",
-                 static_cast<double>(rel0_2));
 
     return 0;
 }

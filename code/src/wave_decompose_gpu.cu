@@ -1,11 +1,8 @@
-// GPU wave decomposition (Jeschke & Wojtan-style low-pass / tilde split).
-
 #include "wave_decompose_gpu.hpp"
 
 #include "wavedecomposer.h"
 
 #include <algorithm>
-#include <cstdio>
 
 #include <cuda_runtime.h>
 
@@ -15,7 +12,6 @@ namespace {
     do {                                                                                                               \
         cudaError_t _e = (x);                                                                                          \
         if (_e != cudaSuccess) {                                                                                       \
-            std::fprintf(stderr, "%s:%d CUDA error: %s\n", __FILE__, __LINE__, cudaGetErrorString(_e));               \
             std::abort();                                                                                              \
         }                                                                                                              \
     } while (0)
@@ -163,7 +159,6 @@ int blocks_for(int n, int threads = 256) {
     return (n + threads - 1) / threads;
 }
 
-// Ping-pong diffuse; d_a and d_b must differ. Final field ends in d_dst (copy if needed).
 void wd_run_diffuse(const float* d_src,
                     float* d_dst,
                     float* d_a,

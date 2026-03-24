@@ -165,7 +165,6 @@ void jwTransportSurface(WaveDecomposition& dec,
     const int   ny = gBar0.NY;
     const float dx = gBar0.dx;
 
-    // ----- Alg. 3: tilde qx, qy -----
     std::vector<float> qxs = dec.qx_tilde;
     std::vector<float> qys = dec.qy_tilde;
 
@@ -230,7 +229,6 @@ void jwTransportSurface(WaveDecomposition& dec,
         }
     }
 
-    // Alg. 4: tilde h update using divergence of u_bar from bar^{t+dt} only
     std::vector<float> hs = dec.h_tilde;
     for (int j = 0; j < ny; ++j) {
         for (int i = 0; i < nx; ++i) {

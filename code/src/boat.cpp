@@ -15,8 +15,6 @@ constexpr float kDryEps       = 1e-4f;
 constexpr float kMaxSpeed     = 8.f;
 constexpr float kForcingScale = 8.5f;
 constexpr float kTurnGain     = 1.2f;
-// Anisotropic Gaussian in hull frame: exp(-(ax*nx^2 + ay*ny^2)), nx=lx/halfL, ny=ly/halfWb
-// Keep ax modest so bow/stern tips still get forcing (large |nx| was starving the bow visually).
 constexpr float kGaussInvScaleAlong  = 0.95f;
 constexpr float kGaussInvScaleAcross = 5.5f;
 
@@ -189,9 +187,6 @@ void applyBoatForcing(Boat& boat, Grid& g, float halfW, float halfD, float dt) {
             float forcing = boat.draft * speedAbs * shapeW * kForcingScale;
             forcing *= (0.82f + 0.22f * std::min(froude, 2.5f));
 
-            // Motion-relative bow/stern: lx>0 is geometric bow; flip when reversing so
-            // "bow" is always upstream along velocity. Previously only a downstream
-            // momentum sink was applied — that favors a stern wake, not bow pile-up.
             const float nMotion =
                 (lx * std::copysign(1.f, boat.speed)) / std::max(halfL, 1e-4f);
             const float sternBlend = std::clamp(0.5f - 0.5f * nMotion, 0.f, 1.f);

@@ -104,7 +104,6 @@ def plot_svg(data: dict[int, list[tuple[float, float]]], out: Path) -> None:
             cx, cy = tx(p[0]), ty(p[1])
             lines.append(f'<circle cx="{cx:.2f}" cy="{cy:.2f}" r="3" fill="{col}"/>')
 
-    # axes
     x_axis_y = ty(1.0)
     lines.append(
         f'<line x1="{margin_l}" y1="{margin_t + plot_h}" x2="{margin_l + plot_w}" '
@@ -119,7 +118,6 @@ def plot_svg(data: dict[int, list[tuple[float, float]]], out: Path) -> None:
         f'y2="{x_axis_y:.2f}" stroke="#888" stroke-width="1" stroke-dasharray="6,4"/>'
     )
 
-    # ticks x
     for i in range(0, 9):
         lam = x0 + (x1 - x0) * i / 8.0
         x_ = tx(lam)
@@ -132,7 +130,6 @@ def plot_svg(data: dict[int, list[tuple[float, float]]], out: Path) -> None:
             f'font-family="sans-serif">{lam:.1f}</text>'
         )
 
-    # ticks y
     for i in range(0, 7):
         v = y0 + (y1 - y0) * i / 6.0
         y_ = ty(v)

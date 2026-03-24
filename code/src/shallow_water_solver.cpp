@@ -183,13 +183,22 @@ static void stepQX(const Grid& g, std::vector<float>& qx_out) {
                 du_dy = (u_u - u) / g.dx;
             }
 
-            // Pressure gradient
-            float dh = g.H(std::min(g.NX-1,i), j) - g.H(std::max(0,i-1), j);
-            float pres = G * dh / g.dx;
+            // Pressure gradient (dry-neighbor limiter): near wet/dry fronts, suppress
+            // spurious acceleration caused by steep depth jumps.
+            const float hL = g.H(std::max(0, i - 1), j);
+            const float hR = g.H(std::min(g.NX - 1, i), j);
+            float pres = 0.f;
+            if (hL >= DRY_EPS && hR >= DRY_EPS) {
+                const float dh = hR - hL;
+                pres = G * dh / g.dx;
+            }
 
-            float u_new = u - g.dt * ((qx_avg/hf)*du_dx + (qy_mid/hf)*du_dy + pres);
-            u_new = std::max(-umax, std::min(umax, u_new));
-            qx_out[i + j*(g.NX+1)] = u_new * hf;
+            const float advection = (qx_avg / hf) * du_dx + (qy_mid / hf) * du_dy;
+            const float qx_current = g.QX(i, j);
+            float qx_next = qx_current - g.dt * (hf * advection + hf * pres);
+            const float qmax = hf * umax;
+            qx_next = std::max(-qmax, std::min(qmax, qx_next));
+            qx_out[i + j*(g.NX+1)] = qx_next;
         }
     }
 }
@@ -238,13 +247,22 @@ static void stepQY(const Grid& g, std::vector<float>& qy_out) {
                 dv_dy = (v_u - v) / g.dx;
             }
 
-            // Pressure gradient
-            float dh = g.H(i, std::min(g.NY-1,j)) - g.H(i, std::max(0,j-1));
-            float pres = G * dh / g.dx;
+            // Pressure gradient (dry-neighbor limiter): near wet/dry fronts, suppress
+            // spurious acceleration caused by steep depth jumps.
+            const float hD = g.H(i, std::max(0, j - 1));
+            const float hU = g.H(i, std::min(g.NY - 1, j));
+            float pres = 0.f;
+            if (hD >= DRY_EPS && hU >= DRY_EPS) {
+                const float dh = hU - hD;
+                pres = G * dh / g.dx;
+            }
 
-            float v_new = v - g.dt * ((qx_mid/hf)*dv_dx + (qy_avg/hf)*dv_dy + pres);
-            v_new = std::max(-vmax, std::min(vmax, v_new));
-            qy_out[i + j*g.NX] = v_new * hf;
+            const float advection = (qx_mid / hf) * dv_dx + (qy_avg / hf) * dv_dy;
+            const float qy_current = g.QY(i, j);
+            float qy_next = qy_current - g.dt * (hf * advection + hf * pres);
+            const float qmax = hf * vmax;
+            qy_next = std::max(-qmax, std::min(qmax, qy_next));
+            qy_out[i + j*g.NX] = qy_next;
         }
     }
 }

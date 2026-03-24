@@ -20,8 +20,10 @@ file(GLOB_RECURSE APP_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.c"
 )
 
-# Keep experimental standalone demos (with their own main) out of BachelorProject.
-list(FILTER APP_SOURCES EXCLUDE REGEX ".*/src/dam\\.cpp$")
+# Keep the primary app single-entry; auxiliary demos define their own main().
+list(REMOVE_ITEM APP_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/dam.cpp"
+)
 
 if(NOT APP_SOURCES)
     message(FATAL_ERROR "No source files found under ${CMAKE_CURRENT_SOURCE_DIR}/src")
@@ -107,16 +109,21 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     CUDA::cufft
 )
 
-# Standalone dam-break scene renderer (first step: static triple-opening dam setup).
-add_executable(DamScene
+# ---------------------------------------------------------------------------
+# Pure SWE dam-break demo (no J&W split, no Airy CUDA)
+# ---------------------------------------------------------------------------
+add_executable(DamSWE
     "${CMAKE_CURRENT_SOURCE_DIR}/src/dam.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/shallow_water_solver.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/external/glad/src/glad.c"
 )
-target_include_directories(DamScene PRIVATE
+
+target_include_directories(DamSWE PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${CMAKE_CURRENT_SOURCE_DIR}/external/glad/include"
 )
-target_link_libraries(DamScene PRIVATE
+
+target_link_libraries(DamSWE PRIVATE
     ${GLFW_TARGET}
     ${GLM_TARGET}
     OpenGL::GL

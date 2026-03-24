@@ -4,54 +4,170 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
+#include "shallow_water_solver.h"
+
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <vector>
 
 namespace {
 
-struct Vertex {
-    glm::vec3 pos;
-    glm::vec3 nrm;
-};
+constexpr int kNx = 256;
+constexpr int kNy = 64;
+constexpr float kDx = 1.0f;
+constexpr float kDt = 1.0f / 60.0f;
+constexpr int kSubsteps = 2;
+constexpr bool kVsync = true;
+constexpr bool kUseSpongeBoundary = true;
+constexpr int kSpongeWidth = 10;
+constexpr float kSpongeStrength = 0.09f;
+constexpr int kWallThicknessCells = 2;
+constexpr int kGapHalfWidthCells = 6;
+// Negative moves wall toward upstream (left), positive toward downstream (right).
+constexpr int kWallCenterOffsetCells = -30;
+constexpr int kSecondWallCenterOffsetCells = -0;
+constexpr int kThirdWallCenterOffsetCells = 16;
+constexpr float kWallHeight = 10.f;
+constexpr float kWetDepthEps = 0.03f;
+constexpr bool kUseCenterGap = true;
+constexpr float kG = 9.81f;
+constexpr float kGapRoundnessXCells = 1.2f;
+constexpr int kGapCount = 3;        // first wall
+constexpr int kSecondGapCount = 1;  // second wall: one centered opening
+constexpr int kThirdGapCount = 0;   // third wall: fully closed
+constexpr int kGapSpacingCells = 18;
+constexpr glm::vec3 kFixedCamPos(44.03f, 61.59f, -2.16f);
+constexpr float kFixedCamYawDeg = -180.48f;
+constexpr float kFixedCamPitchDeg = -49.76f;
+constexpr float kFixedCamFovDeg = 32.80f;
 
-struct FrameCtx {
-    int w = 1280;
-    int h = 720;
-};
-
-// Camera tuned to mimic the oblique top-down perspective in Fig.4.
-constexpr float kCamFovDeg = 42.0f;
-const glm::vec3 kCamPos(39.5f, 23.0f, -9.5f);
-const glm::vec3 kCamTarget(3.5f, 0.8f, 0.0f);
-
-static const char* kVs = R"GLSL(
+static const char* kVertSrc = R"GLSL(
 #version 330 core
-layout(location = 0) in vec3 aPos;
-layout(location = 1) in vec3 aNrm;
+layout (location = 0) in vec2 aCornerIJ;
 uniform mat4 uMVP;
-uniform mat4 uModel;
-out vec3 vNrmW;
+uniform float uDx;
+uniform float uHalfW;
+uniform float uHalfD;
+uniform sampler2D uH;
+uniform sampler2D uB;
+uniform float uWetDepthEps;
+out vec3 vWorldPos;
+out float vDepth;
+out float vWetFrac;
 void main() {
-    mat3 nrmMat = mat3(transpose(inverse(uModel)));
-    vNrmW = normalize(nrmMat * aNrm);
+    int vi = int(aCornerIJ.x + 0.0001);
+    int vj = int(aCornerIJ.y + 0.0001);
+    ivec2 sz = textureSize(uH, 0);
+    int NX = sz.x;
+    int NY = sz.y;
+    float sumSurf = 0.0;
+    float sumH = 0.0;
+    int cntSurf = 0;
+    int cntH = 0;
+    for (int di = -1; di <= 0; ++di) {
+        for (int dj = -1; dj <= 0; ++dj) {
+            int ci = vi + di;
+            int cj = vj + dj;
+            if (ci >= 0 && ci < NX && cj >= 0 && cj < NY) {
+                float hv = texelFetch(uH, ivec2(ci, cj), 0).r;
+                float bv = texelFetch(uB, ivec2(ci, cj), 0).r;
+                // Do not let dry wall cells lift nearby corner water surface.
+                if (hv > uWetDepthEps) {
+                    sumSurf += bv + hv;
+                    sumH += hv;
+                    cntSurf++;
+                    cntH++;
+                }
+            }
+        }
+    }
+    float y = 0.0;
+    float hAvg = 0.0;
+    if (cntSurf > 0) {
+        y = sumSurf / float(cntSurf);
+        hAvg = sumH / float(cntH);
+    } else {
+        // Fully dry corner: sample nearby bed only so no phantom water sheet appears.
+        float sumBed = 0.0;
+        int cntBed = 0;
+        for (int di = -1; di <= 0; ++di) {
+            for (int dj = -1; dj <= 0; ++dj) {
+                int ci = vi + di;
+                int cj = vj + dj;
+                if (ci >= 0 && ci < NX && cj >= 0 && cj < NY) {
+                    sumBed += texelFetch(uB, ivec2(ci, cj), 0).r;
+                    cntBed++;
+                }
+            }
+        }
+        y = (cntBed > 0) ? (sumBed / float(cntBed)) : 0.0;
+    }
+    vWetFrac = float(cntSurf) * 0.25;
+    float wx = float(vi) * uDx - uHalfW;
+    float wz = float(vj) * uDx - uHalfD;
+    vWorldPos = vec3(wx, y, wz);
+    vDepth = hAvg;
+    gl_Position = uMVP * vec4(vWorldPos, 1.0);
+}
+)GLSL";
+
+static const char* kFragSrc = R"GLSL(
+#version 330 core
+in vec3 vWorldPos;
+in float vDepth;
+in float vWetFrac;
+uniform vec3 uLightDir;
+uniform float uAlpha;
+uniform float uWetDepthEps;
+out vec4 FragColor;
+void main() {
+    // Discard if corner neighborhood is mostly dry (e.g. under solid dams).
+    if (vDepth < uWetDepthEps || vWetFrac < 0.26) {
+        discard;
+    }
+    vec3 nx = dFdx(vWorldPos);
+    vec3 ny = dFdy(vWorldPos);
+    vec3 N = normalize(cross(nx, ny));
+    float t = clamp(vDepth / 5.0, 0.0, 1.0);
+    vec3 shallow = vec3(0.32, 0.78, 0.96);
+    vec3 deep = vec3(0.03, 0.14, 0.33);
+    vec3 base = mix(deep, shallow, t);
+    vec3 L = normalize(uLightDir);
+    float ndl = max(dot(N, L), 0.0);
+    vec3 rgb = base * (0.2 + 0.8 * ndl);
+    FragColor = vec4(rgb, uAlpha);
+}
+)GLSL";
+
+static const char* kSolidVert = R"GLSL(
+#version 330 core
+layout (location = 0) in vec3 aPos;
+layout (location = 1) in vec3 aNrm;
+uniform mat4 uMVP;
+out vec3 vNrm;
+void main() {
+    vNrm = aNrm;
     gl_Position = uMVP * vec4(aPos, 1.0);
 }
 )GLSL";
 
-static const char* kFs = R"GLSL(
+static const char* kSolidFrag = R"GLSL(
 #version 330 core
-in vec3 vNrmW;
-uniform vec3 uColor;
+in vec3 vNrm;
 uniform vec3 uLightDir;
+uniform vec3 uBaseColor;
 out vec4 FragColor;
 void main() {
-    float ndl = max(dot(normalize(vNrmW), normalize(uLightDir)), 0.0);
-    vec3 rgb = uColor * (0.25 + 0.75 * ndl);
+    vec3 N = normalize(vNrm);
+    vec3 L = normalize(uLightDir);
+    float ndl = max(dot(N, L), 0.0);
+    vec3 rgb = uBaseColor * (0.25 + 0.75 * ndl);
     FragColor = vec4(rgb, 1.0);
 }
 )GLSL";
 
-GLuint compile(GLenum type, const char* src) {
+GLuint compileShader(GLenum type, const char* src) {
     GLuint s = glCreateShader(type);
     glShaderSource(s, 1, &src, nullptr);
     glCompileShader(s);
@@ -59,206 +175,472 @@ GLuint compile(GLenum type, const char* src) {
     glGetShaderiv(s, GL_COMPILE_STATUS, &ok);
     if (!ok) {
         char log[512];
-        glGetShaderInfoLog(s, sizeof(log), nullptr, log);
-        std::fprintf(stderr, "shader error: %s\n", log);
+        glGetShaderInfoLog(s, sizeof log, nullptr, log);
+        std::fprintf(stderr, "shader compile error: %s\n", log);
         glDeleteShader(s);
         return 0;
     }
     return s;
 }
 
-GLuint makeProgram() {
-    GLuint vs = compile(GL_VERTEX_SHADER, kVs);
-    GLuint fs = compile(GL_FRAGMENT_SHADER, kFs);
-    if (!vs || !fs) {
-        if (vs) glDeleteShader(vs);
-        if (fs) glDeleteShader(fs);
+GLuint makeProgram(const char* vs, const char* fs) {
+    GLuint v = compileShader(GL_VERTEX_SHADER, vs);
+    GLuint f = compileShader(GL_FRAGMENT_SHADER, fs);
+    if (!v || !f) {
+        if (v) glDeleteShader(v);
+        if (f) glDeleteShader(f);
         return 0;
     }
     GLuint p = glCreateProgram();
-    glAttachShader(p, vs);
-    glAttachShader(p, fs);
+    glAttachShader(p, v);
+    glAttachShader(p, f);
     glLinkProgram(p);
-    glDeleteShader(vs);
-    glDeleteShader(fs);
+    glDeleteShader(v);
+    glDeleteShader(f);
     GLint ok = 0;
     glGetProgramiv(p, GL_LINK_STATUS, &ok);
     if (!ok) {
         char log[512];
-        glGetProgramInfoLog(p, sizeof(log), nullptr, log);
-        std::fprintf(stderr, "link error: %s\n", log);
+        glGetProgramInfoLog(p, sizeof log, nullptr, log);
+        std::fprintf(stderr, "program link error: %s\n", log);
         glDeleteProgram(p);
         return 0;
     }
     return p;
 }
 
-void pushTri(std::vector<Vertex>& v, glm::vec3 a, glm::vec3 b, glm::vec3 c, glm::vec3 n) {
-    v.push_back({a, n});
-    v.push_back({b, n});
-    v.push_back({c, n});
+void buildWaterCornerIJ(int nx, int ny, std::vector<float>& out) {
+    const int vx = nx + 1;
+    const int vz = ny + 1;
+    out.resize(static_cast<size_t>(vx * vz * 2));
+    size_t k = 0;
+    for (int j = 0; j < vz; ++j) {
+        for (int i = 0; i < vx; ++i) {
+            out[k++] = static_cast<float>(i);
+            out[k++] = static_cast<float>(j);
+        }
+    }
 }
 
-void addBox(std::vector<Vertex>& out, glm::vec3 mn, glm::vec3 mx) {
-    glm::vec3 p000{mn.x, mn.y, mn.z};
-    glm::vec3 p001{mn.x, mn.y, mx.z};
-    glm::vec3 p010{mn.x, mx.y, mn.z};
-    glm::vec3 p011{mn.x, mx.y, mx.z};
-    glm::vec3 p100{mx.x, mn.y, mn.z};
-    glm::vec3 p101{mx.x, mn.y, mx.z};
-    glm::vec3 p110{mx.x, mx.y, mn.z};
-    glm::vec3 p111{mx.x, mx.y, mx.z};
-
-    pushTri(out, p001, p101, p111, {0, 0, 1});
-    pushTri(out, p001, p111, p011, {0, 0, 1});
-    pushTri(out, p100, p000, p010, {0, 0, -1});
-    pushTri(out, p100, p010, p110, {0, 0, -1});
-    pushTri(out, p000, p001, p011, {-1, 0, 0});
-    pushTri(out, p000, p011, p010, {-1, 0, 0});
-    pushTri(out, p101, p100, p110, {1, 0, 0});
-    pushTri(out, p101, p110, p111, {1, 0, 0});
-    pushTri(out, p010, p011, p111, {0, 1, 0});
-    pushTri(out, p010, p111, p110, {0, 1, 0});
-    pushTri(out, p000, p100, p101, {0, -1, 0});
-    pushTri(out, p000, p101, p001, {0, -1, 0});
+void buildGridIndices(int nx, int ny, std::vector<unsigned>& idx) {
+    const int vx = nx + 1;
+    idx.clear();
+    idx.reserve(static_cast<size_t>(nx * ny * 6));
+    for (int j = 0; j < ny; ++j) {
+        for (int i = 0; i < nx; ++i) {
+            unsigned i0 = static_cast<unsigned>(i + j * vx);
+            unsigned i1 = i0 + 1u;
+            unsigned i2 = static_cast<unsigned>(i + (j + 1) * vx);
+            unsigned i3 = i2 + 1u;
+            idx.push_back(i0); idx.push_back(i2); idx.push_back(i1);
+            idx.push_back(i1); idx.push_back(i2); idx.push_back(i3);
+        }
+    }
 }
 
-void fbCB(GLFWwindow* w, int ww, int hh) {
+void allocGridTextures(int nx, int ny, GLuint& texH, GLuint& texB) {
+    glGenTextures(1, &texH);
+    glGenTextures(1, &texB);
+    for (int pass = 0; pass < 2; ++pass) {
+        const GLuint t = (pass == 0) ? texH : texB;
+        glBindTexture(GL_TEXTURE_2D, t);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F, nx, ny, 0, GL_RED, GL_FLOAT, nullptr);
+    }
+    glBindTexture(GL_TEXTURE_2D, 0);
+}
+
+void uploadGridTextures(const Grid& g, GLuint texH, GLuint texB) {
+    glBindTexture(GL_TEXTURE_2D, texH);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, g.NX, g.NY, GL_RED, GL_FLOAT, g.h.data());
+    glBindTexture(GL_TEXTURE_2D, texB);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, g.NX, g.NY, GL_RED, GL_FLOAT, g.terrain.data());
+    glBindTexture(GL_TEXTURE_2D, 0);
+}
+
+void pushQuad(std::vector<float>& out, const glm::vec3& a, const glm::vec3& b, const glm::vec3& c, const glm::vec3& d,
+              const glm::vec3& n) {
+    const glm::vec3 no = glm::normalize(n);
+    auto pushV = [&](const glm::vec3& p) {
+        out.push_back(p.x); out.push_back(p.y); out.push_back(p.z);
+        out.push_back(no.x); out.push_back(no.y); out.push_back(no.z);
+    };
+    pushV(a); pushV(b); pushV(c);
+    pushV(a); pushV(c); pushV(d);
+}
+
+void addBox(std::vector<float>& out, float x0, float x1, float y0, float y1, float z0, float z1) {
+    const glm::vec3 p000(x0, y0, z0);
+    const glm::vec3 p001(x0, y0, z1);
+    const glm::vec3 p010(x0, y1, z0);
+    const glm::vec3 p011(x0, y1, z1);
+    const glm::vec3 p100(x1, y0, z0);
+    const glm::vec3 p101(x1, y0, z1);
+    const glm::vec3 p110(x1, y1, z0);
+    const glm::vec3 p111(x1, y1, z1);
+
+    pushQuad(out, p010, p110, p111, p011, glm::vec3(0.f, 1.f, 0.f));   // top
+    pushQuad(out, p000, p001, p101, p100, glm::vec3(0.f, -1.f, 0.f));  // bottom
+    pushQuad(out, p000, p100, p110, p010, glm::vec3(0.f, 0.f, -1.f));  // -z
+    pushQuad(out, p001, p011, p111, p101, glm::vec3(0.f, 0.f, 1.f));   // +z
+    pushQuad(out, p000, p010, p011, p001, glm::vec3(-1.f, 0.f, 0.f));  // -x
+    pushQuad(out, p100, p101, p111, p110, glm::vec3(1.f, 0.f, 0.f));   // +x
+}
+
+bool isWallSolidCell(int i, int j, int nx, int ny) {
+    const int wallCenters[3] = {
+        nx / 2 + kWallCenterOffsetCells,
+        nx / 2 + kSecondWallCenterOffsetCells,
+        nx / 2 + kThirdWallCenterOffsetCells
+    };
+    for (int wc = 0; wc < 3; ++wc) {
+        const int wallCenter = wallCenters[wc];
+        const int wallI0 = wallCenter - kWallThicknessCells / 2;
+        const int wallI1 = wallI0 + kWallThicknessCells;
+        if (i < wallI0 || i >= wallI1) {
+            continue;
+        }
+        if (!kUseCenterGap) {
+            return true;
+        }
+
+        // Rounded openings: multiple ellipses in (x,z) over cell centers.
+        const float cx = 0.5f * static_cast<float>(wallI0 + wallI1 - 1);
+        const float rx = std::max(0.75f, kGapRoundnessXCells);
+        const float rz = std::max(1.0f, static_cast<float>(kGapHalfWidthCells));
+        const float centerZ = 0.5f * static_cast<float>(ny - 1);
+        const int wallGapCount = (wc == 0) ? kGapCount : (wc == 1 ? kSecondGapCount : kThirdGapCount);
+        if (wallGapCount <= 0) {
+            return true;
+        }
+        const int gapCount = std::max(1, wallGapCount);
+        const float spacing = static_cast<float>(std::max(1, kGapSpacingCells));
+
+        bool inRoundedGap = false;
+        for (int gi = 0; gi < gapCount; ++gi) {
+            const float offsetIdx = static_cast<float>(gi) - 0.5f * static_cast<float>(gapCount - 1);
+            const float cz = centerZ + offsetIdx * spacing;
+            const float dx = (static_cast<float>(i) - cx) / rx;
+            const float dz = (static_cast<float>(j) - cz) / rz;
+            if (dx * dx + dz * dz <= 1.0f) {
+                inRoundedGap = true;
+                break;
+            }
+        }
+        return !inRoundedGap;
+    }
+    return false;
+}
+
+void buildDamWallMesh(std::vector<float>& out, int nx, int ny, float dx, float halfW, float halfD) {
+    out.clear();
+    out.reserve(static_cast<size_t>(kWallThicknessCells * ny * 36u * 6u));
+
+    for (int j = 0; j < ny; ++j) {
+        for (int i = 0; i < nx; ++i) {
+            if (!isWallSolidCell(i, j, nx, ny)) {
+                continue;
+            }
+            const float x0 = static_cast<float>(i) * dx - halfW;
+            const float x1 = static_cast<float>(i + 1) * dx - halfW;
+            const float z0 = static_cast<float>(j) * dx - halfD;
+            const float z1 = static_cast<float>(j + 1) * dx - halfD;
+            addBox(out, x0, x1, 0.0f, kWallHeight, z0, z1);
+        }
+    }
+}
+
+void setupDamInitialState(Grid& g) {
+    const int wallCenter = g.NX / 2 + kWallCenterOffsetCells;
+    const int wallI0 = wallCenter - kWallThicknessCells / 2;
+    const float hLeft = 7.0f;
+    const float hRight = 3.f;
+    const float transitionCells = 3.0f;
+    const float x0 = static_cast<float>(wallI0);
+
+    for (int j = 0; j < g.NY; ++j) {
+        for (int i = 0; i < g.NX; ++i) {
+            g.B(i, j) = 0.0f;
+            const float x = static_cast<float>(i) - x0;
+            const float blend = 0.5f * (1.0f + std::tanh(x / transitionCells));
+            g.H(i, j) = hLeft * (1.0f - blend) + hRight * blend;
+
+            if (isWallSolidCell(i, j, g.NX, g.NY)) {
+                g.B(i, j) = kWallHeight;
+                g.H(i, j) = 0.0f;
+            }
+        }
+    }
+    std::fill(g.qx.begin(), g.qx.end(), 0.0f);
+    std::fill(g.qy.begin(), g.qy.end(), 0.0f);
+    sweApplyBoundaryConditions(g);
+}
+
+void applySpongeLayer(Grid& g) {
+    if (!kUseSpongeBoundary) {
+        return;
+    }
+    const int nx = g.NX;
+    const int ny = g.NY;
+    const int w = std::max(1, kSpongeWidth);
+
+    for (int j = 0; j < ny; ++j) {
+        for (int i = 0; i <= nx; ++i) {
+            // Keep left/right boundaries fully reflective; sponge only top/bottom.
+            int d = std::min(j, ny - 1 - j);
+            if (d < w) {
+                const float t = 1.0f - static_cast<float>(d) / static_cast<float>(w);
+                const float damp = std::exp(-kSpongeStrength * t * t);
+                g.QX(i, j) *= damp;
+            }
+        }
+    }
+    for (int j = 0; j <= ny; ++j) {
+        for (int i = 0; i < nx; ++i) {
+            // Keep left/right boundaries fully reflective; sponge only top/bottom.
+            int d = std::min(j, ny - j);
+            if (d < w) {
+                const float t = 1.0f - static_cast<float>(d) / static_cast<float>(w);
+                const float damp = std::exp(-kSpongeStrength * t * t);
+                g.QY(i, j) *= damp;
+            }
+        }
+    }
+    sweApplyBoundaryConditions(g);
+}
+
+struct FrameCtx {
+    int fbW = 1280;
+    int fbH = 720;
+};
+
+void framebufferSizeCB(GLFWwindow* w, int width, int height) {
     auto* ctx = static_cast<FrameCtx*>(glfwGetWindowUserPointer(w));
     if (ctx) {
-        ctx->w = ww;
-        ctx->h = hh;
+        ctx->fbW = width;
+        ctx->fbH = height;
     }
-    glViewport(0, 0, ww, hh);
-}
-
-void drawMesh(GLuint p, GLuint vao, GLsizei n,
-              const glm::mat4& vp, const glm::mat4& model,
-              const glm::vec3& color, const glm::vec3& lightDir) {
-    glUseProgram(p);
-    glm::mat4 mvp = vp * model;
-    glUniformMatrix4fv(glGetUniformLocation(p, "uMVP"), 1, GL_FALSE, glm::value_ptr(mvp));
-    glUniformMatrix4fv(glGetUniformLocation(p, "uModel"), 1, GL_FALSE, glm::value_ptr(model));
-    glUniform3fv(glGetUniformLocation(p, "uColor"), 1, glm::value_ptr(color));
-    glUniform3fv(glGetUniformLocation(p, "uLightDir"), 1, glm::value_ptr(lightDir));
-    glBindVertexArray(vao);
-    glDrawArrays(GL_TRIANGLES, 0, n);
+    glViewport(0, 0, width, height);
 }
 
 } // namespace
 
 int main() {
     if (!glfwInit()) {
-        std::fprintf(stderr, "glfw init failed\n");
+        std::fprintf(stderr, "glfwInit failed\n");
         return 1;
     }
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-    GLFWwindow* win = glfwCreateWindow(1280, 720, "Dam Scene (3 Openings)", nullptr, nullptr);
-    if (!win) {
-        std::fprintf(stderr, "window create failed\n");
+    GLFWwindow* window = glfwCreateWindow(1280, 720, "Pure SWE Dam Break", nullptr, nullptr);
+    if (!window) {
+        std::fprintf(stderr, "glfwCreateWindow failed\n");
         glfwTerminate();
         return 1;
     }
-    glfwMakeContextCurrent(win);
-    glfwSwapInterval(1);
+    glfwMakeContextCurrent(window);
+    glfwSwapInterval(kVsync ? 1 : 0);
 
-    if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
-        std::fprintf(stderr, "glad load failed\n");
-        glfwDestroyWindow(win);
+    if (!gladLoadGLLoader(reinterpret_cast<GLADloadproc>(glfwGetProcAddress))) {
+        std::fprintf(stderr, "gladLoadGLLoader failed\n");
+        glfwDestroyWindow(window);
         glfwTerminate();
         return 1;
     }
 
-    FrameCtx frame{};
-    glfwSetWindowUserPointer(win, &frame);
-    glfwSetFramebufferSizeCallback(win, fbCB);
+    FrameCtx frame;
+    glfwSetWindowUserPointer(window, &frame);
+    glfwSetFramebufferSizeCallback(window, framebufferSizeCB);
+    glfwGetFramebufferSize(window, &frame.fbW, &frame.fbH);
 
-    GLuint prog = makeProgram();
+    GLuint prog = makeProgram(kVertSrc, kFragSrc);
     if (!prog) {
-        glfwDestroyWindow(win);
+        glfwDestroyWindow(window);
+        glfwTerminate();
+        return 1;
+    }
+    GLuint solidProg = makeProgram(kSolidVert, kSolidFrag);
+    if (!solidProg) {
+        glDeleteProgram(prog);
+        glfwDestroyWindow(window);
         glfwTerminate();
         return 1;
     }
 
-    std::vector<Vertex> solid, water;
+    GLint locMVP = glGetUniformLocation(prog, "uMVP");
+    GLint locLight = glGetUniformLocation(prog, "uLightDir");
+    GLint locWaterAlpha = glGetUniformLocation(prog, "uAlpha");
+    GLint locDx = glGetUniformLocation(prog, "uDx");
+    GLint locHalfW = glGetUniformLocation(prog, "uHalfW");
+    GLint locHalfD = glGetUniformLocation(prog, "uHalfD");
+    GLint locTexH = glGetUniformLocation(prog, "uH");
+    GLint locTexB = glGetUniformLocation(prog, "uB");
+    GLint locWetEps = glGetUniformLocation(prog, "uWetDepthEps");
+    GLint locSolidMVP = glGetUniformLocation(solidProg, "uMVP");
+    GLint locSolidLight = glGetUniformLocation(solidProg, "uLightDir");
+    GLint locSolidColor = glGetUniformLocation(solidProg, "uBaseColor");
 
-    // Ground slab
-    addBox(solid, {-40.0f, -0.15f, -24.0f}, {40.0f, 0.0f, 24.0f});
+    Grid g(kNx, kNy, kDx, kDt);
+    setupDamInitialState(g);
+    const float halfW = 0.5f * kNx * kDx;
+    const float halfD = 0.5f * kNy * kDx;
 
-    // Side walls (channel boundaries)
-    addBox(solid, {-40.0f, 0.0f, -24.0f}, {40.0f, 2.2f, -22.0f});
-    addBox(solid, {-40.0f, 0.0f, 22.0f}, {40.0f, 2.2f, 24.0f});
+    std::vector<unsigned> indices;
+    buildGridIndices(kNx, kNy, indices);
+    std::vector<float> waterCornerIJ;
+    buildWaterCornerIJ(kNx, kNy, waterCornerIJ);
+    std::vector<float> damWallVerts;
+    buildDamWallMesh(damWallVerts, kNx, kNy, kDx, halfW, halfD);
 
-    // Dam wall at x = 0 with three openings
-    constexpr float damX0 = -0.8f;
-    constexpr float damX1 = 0.8f;
-    constexpr float damH = 2.0f;
-    addBox(solid, {damX0, 0.0f, -22.0f}, {damX1, damH, -12.0f}); // left segment
-    addBox(solid, {damX0, 0.0f, -8.0f},  {damX1, damH, -2.0f});  // mid-left segment
-    addBox(solid, {damX0, 0.0f, 2.0f},   {damX1, damH, 8.0f});   // mid-right segment
-    addBox(solid, {damX0, 0.0f, 12.0f},  {damX1, damH, 22.0f});  // right segment
-    // Openings are [-12,-8], [-2,2], [8,12] along z.
+    GLuint texH = 0, texB = 0;
+    allocGridTextures(kNx, kNy, texH, texB);
 
-    // Upstream water block (dam-break initial water)
-    addBox(water, {-38.0f, 0.0f, -22.0f}, {damX0, 1.2f, 22.0f});
-
-    GLuint vaoSolid = 0, vboSolid = 0, vaoWater = 0, vboWater = 0;
-    glGenVertexArrays(1, &vaoSolid);
-    glGenBuffers(1, &vboSolid);
-    glBindVertexArray(vaoSolid);
-    glBindBuffer(GL_ARRAY_BUFFER, vboSolid);
-    glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(solid.size() * sizeof(Vertex)), solid.data(), GL_STATIC_DRAW);
+    GLuint vao = 0, vbo = 0, ebo = 0;
+    glGenVertexArrays(1, &vao);
+    glGenBuffers(1, &vbo);
+    glGenBuffers(1, &ebo);
+    glBindVertexArray(vao);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(waterCornerIJ.size() * sizeof(float)), waterCornerIJ.data(),
+                 GL_STATIC_DRAW);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, static_cast<GLsizeiptr>(indices.size() * sizeof(unsigned)),
+                 indices.data(), GL_STATIC_DRAW);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), reinterpret_cast<void*>(0));
     glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, pos));
-    glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, nrm));
+    glBindVertexArray(0);
 
-    glGenVertexArrays(1, &vaoWater);
-    glGenBuffers(1, &vboWater);
-    glBindVertexArray(vaoWater);
-    glBindBuffer(GL_ARRAY_BUFFER, vboWater);
-    glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(water.size() * sizeof(Vertex)), water.data(), GL_STATIC_DRAW);
+    GLuint wallVao = 0, wallVbo = 0;
+    glGenVertexArrays(1, &wallVao);
+    glGenBuffers(1, &wallVbo);
+    glBindVertexArray(wallVao);
+    glBindBuffer(GL_ARRAY_BUFFER, wallVbo);
+    glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(damWallVerts.size() * sizeof(float)), damWallVerts.data(),
+                 GL_STATIC_DRAW);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), reinterpret_cast<void*>(0));
     glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, pos));
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), reinterpret_cast<void*>(3 * sizeof(float)));
     glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, nrm));
     glBindVertexArray(0);
 
     glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LESS);
+    glClearColor(0.12f, 0.16f, 0.24f, 1.f);
 
-    while (!glfwWindowShouldClose(win)) {
-        glfwPollEvents();
-        if (glfwGetKey(win, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
-            glfwSetWindowShouldClose(win, GLFW_TRUE);
+    glm::vec3 lightDir = glm::normalize(glm::vec3(0.35f, 0.85f, 0.4f));
+    double fpsPrevT = glfwGetTime();
+    float fpsShown = 0.f;
+    double simT = 0.0;
+
+    while (!glfwWindowShouldClose(window)) {
+        const double now = glfwGetTime();
+
+        if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
+            glfwSetWindowShouldClose(window, GLFW_TRUE);
+        }
+        if (glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS) {
+            setupDamInitialState(g);
+            simT = 0.0;
         }
 
-        glClearColor(0.84f, 0.80f, 0.72f, 1.0f);
+        for (int s = 0; s < kSubsteps; ++s) {
+            sweStep(g);
+            applySpongeLayer(g);
+            simT += g.dt;
+        }
+
+        uploadGridTextures(g, texH, texB);
+
+        const float aspect = frame.fbH > 0 ? static_cast<float>(frame.fbW) / static_cast<float>(frame.fbH) : 1.f;
+        const float yaw = glm::radians(kFixedCamYawDeg);
+        const float pitch = glm::radians(kFixedCamPitchDeg);
+        glm::vec3 camFront(
+            std::cos(yaw) * std::cos(pitch),
+            std::sin(pitch),
+            std::sin(yaw) * std::cos(pitch)
+        );
+        camFront = glm::normalize(camFront);
+        const glm::vec3 worldUp(0.f, 1.f, 0.f);
+        glm::vec3 camRight = glm::normalize(glm::cross(camFront, worldUp));
+        glm::vec3 camUp = glm::normalize(glm::cross(camRight, camFront));
+        glm::mat4 proj = glm::perspective(glm::radians(kFixedCamFovDeg), aspect, 0.1f, 1500.f);
+        glm::mat4 view = glm::lookAt(kFixedCamPos, kFixedCamPos + camFront, camUp);
+        glm::mat4 mvp = proj * view;
+
+        glViewport(0, 0, frame.fbW, frame.fbH);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        float aspect = (frame.h > 0) ? static_cast<float>(frame.w) / static_cast<float>(frame.h) : 1.0f;
-        glm::mat4 proj = glm::perspective(glm::radians(kCamFovDeg), aspect, 0.1f, 300.0f);
-        glm::mat4 view = glm::lookAt(kCamPos, kCamTarget, glm::vec3(0, 1, 0));
-        glm::mat4 vp = proj * view;
+        glDisable(GL_BLEND);
+        glDepthMask(GL_TRUE);
+        glDisable(GL_CULL_FACE);
+        glUseProgram(solidProg);
+        glUniformMatrix4fv(locSolidMVP, 1, GL_FALSE, glm::value_ptr(mvp));
+        glUniform3fv(locSolidLight, 1, glm::value_ptr(lightDir));
+        const glm::vec3 wallColor(0.58f, 0.56f, 0.52f);
+        glUniform3fv(locSolidColor, 1, glm::value_ptr(wallColor));
+        glBindVertexArray(wallVao);
+        glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(damWallVerts.size() / 6));
+        glBindVertexArray(0);
 
-        glm::vec3 lightDir = glm::normalize(glm::vec3(0.45f, 1.0f, 0.35f));
-        drawMesh(prog, vaoSolid, static_cast<GLsizei>(solid.size()), vp, glm::mat4(1.0f),
-                 glm::vec3(0.82f, 0.76f, 0.61f), lightDir);
-        drawMesh(prog, vaoWater, static_cast<GLsizei>(water.size()), vp, glm::mat4(1.0f),
-                 glm::vec3(0.42f, 0.70f, 0.90f), lightDir);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glDepthMask(GL_FALSE);
+        glDisable(GL_CULL_FACE);
 
-        glfwSwapBuffers(win);
+        glUseProgram(prog);
+        glUniformMatrix4fv(locMVP, 1, GL_FALSE, glm::value_ptr(mvp));
+        glUniform3fv(locLight, 1, glm::value_ptr(lightDir));
+        glUniform1f(locWaterAlpha, 0.9f);
+        glUniform1f(locDx, kDx);
+        glUniform1f(locHalfW, halfW);
+        glUniform1f(locHalfD, halfD);
+        glUniform1f(locWetEps, kWetDepthEps);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, texH);
+        glUniform1i(locTexH, 0);
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, texB);
+        glUniform1i(locTexB, 1);
+        glActiveTexture(GL_TEXTURE0);
+
+        glBindVertexArray(vao);
+        glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(indices.size()), GL_UNSIGNED_INT, nullptr);
+        glBindVertexArray(0);
+
+        glDepthMask(GL_TRUE);
+        glDisable(GL_BLEND);
+
+        glfwSwapBuffers(window);
+        glfwPollEvents();
+
+        const double dtF = now - fpsPrevT;
+        fpsPrevT = now;
+        if (dtF > 1e-6 && dtF < 2.0) {
+            const float inst = static_cast<float>(1.0 / dtF);
+            fpsShown = (fpsShown < 1e-3f) ? inst : (fpsShown * 0.92f + inst * 0.08f);
+        }
+        char title[256];
+        std::snprintf(title, sizeof title,
+                      "Pure SWE Dam Break | %.0f FPS | t=%.2f s | fixed camera",
+                      static_cast<double>(fpsShown), simT);
+        glfwSetWindowTitle(window, title);
     }
 
-    glDeleteBuffers(1, &vboSolid);
-    glDeleteVertexArrays(1, &vaoSolid);
-    glDeleteBuffers(1, &vboWater);
-    glDeleteVertexArrays(1, &vaoWater);
     glDeleteProgram(prog);
-    glfwDestroyWindow(win);
+    glDeleteProgram(solidProg);
+    glDeleteTextures(1, &texH);
+    glDeleteTextures(1, &texB);
+    glDeleteBuffers(1, &wallVbo);
+    glDeleteVertexArrays(1, &wallVao);
+    glDeleteBuffers(1, &vbo);
+    glDeleteBuffers(1, &ebo);
+    glDeleteVertexArrays(1, &vao);
+    glfwDestroyWindow(window);
     glfwTerminate();
     return 0;
 }
-

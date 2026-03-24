@@ -1,15 +1,3 @@
-// =============================================================================
-// SWE Solver - Stelling & Duinmeijer 2003 (momentum-conserving scheme)
-// Corresponding to Appendix A of Jeschke & Wojtan, SIGGRAPH 2023
-//
-// Staggered grid:
-//   h[i,j]  - cell centers, water depth
-//   qx[i,j] - x-faces between (i-1,j) and (i,j), i in [0,NX]
-//   qy[i,j] - y-faces between (i,j-1) and (i,j), j in [0,NY]
-//
-// Leapfrog: h at half steps (t+dt/2), q at integer times t.
-// =============================================================================
-
 #pragma once
 
 #include <vector>

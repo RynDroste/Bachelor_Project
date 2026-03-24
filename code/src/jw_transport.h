@@ -1,5 +1,3 @@
-// Jeschke & Wojtan 2023 Sec. 4.4 — advect surface tilde quantities with bulk velocity (semi-Lagrangian Alg. 3–4)
-
 #pragma once
 
 struct Grid;

@@ -24,7 +24,6 @@ constexpr int kSpongeWidth = 10;
 constexpr float kSpongeStrength = 0.09f;
 constexpr int kWallThicknessCells = 2;
 constexpr int kGapHalfWidthCells = 6;
-// Negative moves wall toward upstream (left), positive toward downstream (right).
 constexpr int kWallCenterOffsetCells = -30;
 constexpr int kSecondWallCenterOffsetCells = -0;
 constexpr int kThirdWallCenterOffsetCells = 16;
@@ -72,7 +71,6 @@ void main() {
             if (ci >= 0 && ci < NX && cj >= 0 && cj < NY) {
                 float hv = texelFetch(uH, ivec2(ci, cj), 0).r;
                 float bv = texelFetch(uB, ivec2(ci, cj), 0).r;
-                // Do not let dry wall cells lift nearby corner water surface.
                 if (hv > uWetDepthEps) {
                     sumSurf += bv + hv;
                     sumH += hv;
@@ -88,7 +86,6 @@ void main() {
         y = sumSurf / float(cntSurf);
         hAvg = sumH / float(cntH);
     } else {
-        // Fully dry corner: sample nearby bed only so no phantom water sheet appears.
         float sumBed = 0.0;
         int cntBed = 0;
         for (int di = -1; di <= 0; ++di) {
@@ -122,7 +119,6 @@ uniform float uAlpha;
 uniform float uWetDepthEps;
 out vec4 FragColor;
 void main() {
-    // Discard if corner neighborhood is mostly dry (e.g. under solid dams).
     if (vDepth < uWetDepthEps || vWetFrac < 0.26) {
         discard;
     }
@@ -174,9 +170,6 @@ GLuint compileShader(GLenum type, const char* src) {
     GLint ok = 0;
     glGetShaderiv(s, GL_COMPILE_STATUS, &ok);
     if (!ok) {
-        char log[512];
-        glGetShaderInfoLog(s, sizeof log, nullptr, log);
-        std::fprintf(stderr, "shader compile error: %s\n", log);
         glDeleteShader(s);
         return 0;
     }
@@ -200,9 +193,6 @@ GLuint makeProgram(const char* vs, const char* fs) {
     GLint ok = 0;
     glGetProgramiv(p, GL_LINK_STATUS, &ok);
     if (!ok) {
-        char log[512];
-        glGetProgramInfoLog(p, sizeof log, nullptr, log);
-        std::fprintf(stderr, "program link error: %s\n", log);
         glDeleteProgram(p);
         return 0;
     }
@@ -307,7 +297,6 @@ bool isWallSolidCell(int i, int j, int nx, int ny) {
             return true;
         }
 
-        // Rounded openings: multiple ellipses in (x,z) over cell centers.
         const float cx = 0.5f * static_cast<float>(wallI0 + wallI1 - 1);
         const float rx = std::max(0.75f, kGapRoundnessXCells);
         const float rz = std::max(1.0f, static_cast<float>(kGapHalfWidthCells));
@@ -389,7 +378,6 @@ void applySpongeLayer(Grid& g) {
 
     for (int j = 0; j < ny; ++j) {
         for (int i = 0; i <= nx; ++i) {
-            // Keep left/right boundaries fully reflective; sponge only top/bottom.
             int d = std::min(j, ny - 1 - j);
             if (d < w) {
                 const float t = 1.0f - static_cast<float>(d) / static_cast<float>(w);
@@ -400,7 +388,6 @@ void applySpongeLayer(Grid& g) {
     }
     for (int j = 0; j <= ny; ++j) {
         for (int i = 0; i < nx; ++i) {
-            // Keep left/right boundaries fully reflective; sponge only top/bottom.
             int d = std::min(j, ny - j);
             if (d < w) {
                 const float t = 1.0f - static_cast<float>(d) / static_cast<float>(w);
@@ -430,7 +417,6 @@ void framebufferSizeCB(GLFWwindow* w, int width, int height) {
 
 int main() {
     if (!glfwInit()) {
-        std::fprintf(stderr, "glfwInit failed\n");
         return 1;
     }
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
@@ -439,7 +425,6 @@ int main() {
 
     GLFWwindow* window = glfwCreateWindow(1280, 720, "Pure SWE Dam Break", nullptr, nullptr);
     if (!window) {
-        std::fprintf(stderr, "glfwCreateWindow failed\n");
         glfwTerminate();
         return 1;
     }
@@ -447,7 +432,6 @@ int main() {
     glfwSwapInterval(kVsync ? 1 : 0);
 
     if (!gladLoadGLLoader(reinterpret_cast<GLADloadproc>(glfwGetProcAddress))) {
-        std::fprintf(stderr, "gladLoadGLLoader failed\n");
         glfwDestroyWindow(window);
         glfwTerminate();
         return 1;
@@ -538,8 +522,6 @@ int main() {
     double simT = 0.0;
 
     while (!glfwWindowShouldClose(window)) {
-        const double now = glfwGetTime();
-
         if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
             glfwSetWindowShouldClose(window, GLFW_TRUE);
         }
@@ -618,17 +600,17 @@ int main() {
         glfwSwapBuffers(window);
         glfwPollEvents();
 
+        const double now = glfwGetTime();
         const double dtF = now - fpsPrevT;
         fpsPrevT = now;
         if (dtF > 1e-6 && dtF < 2.0) {
             const float inst = static_cast<float>(1.0 / dtF);
             fpsShown = (fpsShown < 1e-3f) ? inst : (fpsShown * 0.92f + inst * 0.08f);
         }
-        char title[256];
-        std::snprintf(title, sizeof title,
-                      "Pure SWE Dam Break | %.0f FPS | t=%.2f s | fixed camera",
-                      static_cast<double>(fpsShown), simT);
+        char title[96];
+        std::snprintf(title, sizeof title, "Pure SWE Dam Break | %.0f FPS", static_cast<double>(fpsShown));
         glfwSetWindowTitle(window, title);
+
     }
 
     glDeleteProgram(prog);

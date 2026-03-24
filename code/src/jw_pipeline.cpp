@@ -10,7 +10,6 @@
 
 namespace {
 
-// Reuse bar-state grids across substeps (avoids two large heap allocs per jwCoupledSubstep).
 struct BarGridScratch {
     std::unique_ptr<Grid> gBar0;
     std::unique_ptr<Grid> gBar1;

@@ -1,5 +1,3 @@
-// Device-side spectral ops + packing for Airy eWave (Jeschke & Wojtan Alg. 2), used with cufftPlan2d.
-
 #include <cuda_runtime.h>
 #include <cufft.h>
 #include <cmath>

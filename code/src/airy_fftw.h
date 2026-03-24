@@ -1,7 +1,3 @@
-// Jeschke & Wojtan 2023 — Algorithm 2: Airy surface waves via FFT + exponential integrator (eWave).
-// 2D, cell-centered spectral ops; qx/qy staggered ↔ cell average for FFT, then scatter back.
-// FFT: cuFFT + spectral eWave + blend + staggered<->cell flux maps on device; host only uploads/downloads tilde fields.
-
 #pragma once
 
 #include <memory>
@@ -16,9 +12,6 @@ public:
     AiryEWaveFFTW(AiryEWaveFFTW&&)                 = delete;
     AiryEWaveFFTW& operator=(AiryEWaveFFTW&&)      = delete;
 
-    // h_tilde_sym: tilde depth at time t aligned with q (paper: average of half-steps)
-    // h_bar: smoothed depth per cell for piecewise omega = sqrt(g k tanh(k h_bar))
-    // qx_tilde / qy_tilde: staggered-face fluxes, updated in place
     void step(float dt, float g,
               const float* h_tilde_sym,
               const float* h_bar,

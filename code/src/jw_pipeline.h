@@ -1,5 +1,3 @@
-// Jeschke & Wojtan 2023 — Algorithm 1 one substep: decompose, bulk SWE, surface Airy, transport, recombine
-
 #pragma once
 
 #include <vector>

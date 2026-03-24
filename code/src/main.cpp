@@ -9,6 +9,7 @@
 #include "jw_pipeline.h"
 #include "shallow_water_solver.h"
 #include "wavedecomposer.h"
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <memory>
@@ -21,16 +22,13 @@ constexpr int   kNy = 128;
 constexpr float kDx = 1.0f;
 constexpr float kDt = 1.0f / 120.0f;
 constexpr int   kSubsteps = 2;
-// false: Stelling & Duinmeijer only (sweStep); true: full J&W (decompose, SWE, Airy, transport, recombine)
-constexpr bool  kJwCoupledStep = true;
+constexpr bool  kJwCoupledStep = false;
 constexpr float kGradPenaltyD = 0.25f; 
 constexpr bool  kVsync          = true; // true: FPS capped at monitor refresh (~60/120)
-// J&W wave low-pass diffusion iterations per substep (header default was 128; lower = much faster).
-constexpr int   kJwDiffuseIters = 8;
+constexpr int   kJwDiffuseIters = 128;
 
 static const char* kVertSrc = R"GLSL(
 #version 330 core
-// Static per-vertex corner indices (cell-corner grid); H/B from textures (GPU height field).
 layout (location = 0) in vec2 aCornerIJ;
 uniform mat4 uMVP;
 uniform float uDx;
@@ -130,9 +128,6 @@ GLuint compileShader(GLenum type, const char* src) {
     GLint ok = 0;
     glGetShaderiv(s, GL_COMPILE_STATUS, &ok);
     if (!ok) {
-        char log[512];
-        glGetShaderInfoLog(s, sizeof log, nullptr, log);
-        std::fprintf(stderr, "shader compile error: %s\n", log);
         glDeleteShader(s);
         return 0;
     }
@@ -156,9 +151,6 @@ GLuint makeProgram(const char* vs, const char* fs) {
     GLint ok = 0;
     glGetProgramiv(p, GL_LINK_STATUS, &ok);
     if (!ok) {
-        char log[512];
-        glGetProgramInfoLog(p, sizeof log, nullptr, log);
-        std::fprintf(stderr, "program link error: %s\n", log);
         glDeleteProgram(p);
         return 0;
     }
@@ -305,7 +297,6 @@ void fillBoatSolidMesh(std::vector<float>& out, const Boat& boat) {
 
 int main() {
     if (!glfwInit()) {
-        std::fprintf(stderr, "glfwInit failed\n");
         return 1;
     }
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
@@ -317,7 +308,6 @@ int main() {
 
     GLFWwindow* window = glfwCreateWindow(1280, 720, "Shallow water", nullptr, nullptr);
     if (!window) {
-        std::fprintf(stderr, "glfwCreateWindow failed\n");
         glfwTerminate();
         return 1;
     }
@@ -325,7 +315,6 @@ int main() {
     glfwSwapInterval(kVsync ? 1 : 0);
 
     if (!gladLoadGLLoader(reinterpret_cast<GLADloadproc>(glfwGetProcAddress))) {
-        std::fprintf(stderr, "gladLoadGLLoader failed\n");
         glfwDestroyWindow(window);
         glfwTerminate();
         return 1;
@@ -353,7 +342,6 @@ int main() {
 
     Grid g(kNx, kNy, kDx, kDt);
     WaveDecomposition waveDec;
-    // Airy: tilde h and q aligned at step t via symmetrized (h^{t-dt/2}+h^{t+dt/2})/2 from successive decompositions
     std::vector<float> hTildePrevHalf;
     std::vector<float> hTildeSym;
     bool               haveHtildePrevHalf = false;
@@ -422,9 +410,8 @@ int main() {
     boat.throttle = 0.55f;
     std::vector<float> boatVerts;
     boatVerts.reserve(256);
-
     double fpsPrevT = glfwGetTime();
-    float  fpsShown = 0.f;
+    float fpsShown = 0.f;
 
     while (!glfwWindowShouldClose(window)) {
         if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
@@ -509,21 +496,17 @@ int main() {
         glfwSwapBuffers(window);
         glfwPollEvents();
 
-        {
-            const double now = glfwGetTime();
-            const double dtF = now - fpsPrevT;
-            fpsPrevT = now;
-            if (dtF > 1e-6 && dtF < 2.0) {
-                const float inst = static_cast<float>(1.0 / dtF);
-                fpsShown = (fpsShown < 1e-3f) ? inst : (fpsShown * 0.92f + inst * 0.08f);
-            }
-            char title[256];
-            const char* gear = (boat.speed > 0.05f) ? "FWD" : (boat.speed < -0.05f) ? "REV" : "NEU";
-            std::snprintf(title, sizeof title,
-                          "Shallow water | %.0f FPS | %.2f m/s (%s) | throttle %.2f", static_cast<double>(fpsShown),
-                          boat.speed, gear, boat.throttle);
-            glfwSetWindowTitle(window, title);
+        const double now = glfwGetTime();
+        const double dtF = now - fpsPrevT;
+        fpsPrevT = now;
+        if (dtF > 1e-6 && dtF < 2.0) {
+            const float inst = static_cast<float>(1.0 / dtF);
+            fpsShown = (fpsShown < 1e-3f) ? inst : (fpsShown * 0.92f + inst * 0.08f);
         }
+        char title[96];
+        std::snprintf(title, sizeof title, "Shallow water | %.0f FPS", static_cast<double>(fpsShown));
+        glfwSetWindowTitle(window, title);
+
     }
 
     glDeleteProgram(prog);

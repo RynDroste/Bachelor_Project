@@ -20,6 +20,9 @@ file(GLOB_RECURSE APP_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.c"
 )
 
+# Keep experimental standalone demos (with their own main) out of BachelorProject.
+list(FILTER APP_SOURCES EXCLUDE REGEX ".*/src/dam\\.cpp$")
+
 if(NOT APP_SOURCES)
     message(FATAL_ERROR "No source files found under ${CMAKE_CURRENT_SOURCE_DIR}/src")
 endif()
@@ -102,4 +105,19 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     OpenGL::GL
     CUDA::cudart
     CUDA::cufft
+)
+
+# Standalone dam-break scene renderer (first step: static triple-opening dam setup).
+add_executable(DamScene
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/dam.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/external/glad/src/glad.c"
+)
+target_include_directories(DamScene PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    "${CMAKE_CURRENT_SOURCE_DIR}/external/glad/include"
+)
+target_link_libraries(DamScene PRIVATE
+    ${GLFW_TARGET}
+    ${GLM_TARGET}
+    OpenGL::GL
 )

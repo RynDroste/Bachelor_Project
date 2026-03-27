@@ -16,7 +16,7 @@ struct Boat {
     float draft = 0.6f;
     float displacement = 12.f;
 
-    float throttle = 0.6f;
+    float throttle = 0.f;
     float rudder = 0.f;
 };
 

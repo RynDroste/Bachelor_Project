@@ -23,6 +23,9 @@ constexpr float kDt = 1.0f / 120.0f;
 constexpr int   kSubsteps = 2;
 // false: Stelling & Duinmeijer only (sweStep); true: full J&W (decompose, SWE, Airy, transport, recombine)
 constexpr bool  kJwCoupledStep = true;
+// true: run J&W on g and plain SWE on a second grid, split-screen left/right in one frame (cost ~2× sim).
+// When true, kJwCoupledStep only affects the left pane; the right pane is always sweStepGpu.
+constexpr bool  kSplitCompareJwSwe = true;
 constexpr float kGradPenaltyD = 0.25f; 
 constexpr bool  kVsync          = true; // true: FPS capped at monitor refresh (~60/120)
 // J&W wave low-pass diffusion iterations per substep (header default was 128; lower = much faster).
@@ -351,22 +354,28 @@ int main() {
     GLint locTexH = glGetUniformLocation(prog, "uH");
     GLint locTexB = glGetUniformLocation(prog, "uB");
 
-    Grid g(kNx, kNy, kDx, kDt);
+    Grid                      g(kNx, kNy, kDx, kDt);
+    std::unique_ptr<Grid>     gCompareSwe;
+    if (kSplitCompareJwSwe)
+        gCompareSwe = std::make_unique<Grid>(kNx, kNy, kDx, kDt);
     WaveDecomposition waveDec;
     // Airy: tilde h and q aligned at step t via symmetrized (h^{t-dt/2}+h^{t+dt/2})/2 from successive decompositions
     std::vector<float> hTildePrevHalf;
     std::vector<float> hTildeSym;
     bool               haveHtildePrevHalf = false;
     std::unique_ptr<AiryEWaveFFTW> airy;
-    if (kJwCoupledStep)
+    if (kJwCoupledStep || kSplitCompareJwSwe)
         airy = std::make_unique<AiryEWaveFFTW>(kNx, kNy, kDx);
     const float halfW = 0.5f * kNx * kDx;
     const float halfD = 0.5f * kNy * kDx;
 
     const float h0 = 4.0f;
     for (int j = 0; j < kNy; ++j) {
-        for (int i = 0; i < kNx; ++i)
+        for (int i = 0; i < kNx; ++i) {
             g.H(i, j) = h0;
+            if (gCompareSwe)
+                gCompareSwe->H(i, j) = h0;
+        }
     }
 
     std::vector<unsigned> indices;
@@ -419,7 +428,7 @@ int main() {
     Boat boat;
     boat.pos = glm::vec2(-18.f, 0.f);
     boat.heading = 0.f;
-    boat.throttle = 0.55f;
+    boat.throttle = 0.f;
     std::vector<float> boatVerts;
     boatVerts.reserve(256);
 
@@ -435,11 +444,17 @@ int main() {
         for (int s = 0; s < kSubsteps; ++s) {
             updateBoat(boat, g, window, halfW, halfD, g.dt, manualControl);
             applyBoatForcing(boat, g, halfW, halfD, g.dt);
-            if (kJwCoupledStep)
+            if (kSplitCompareJwSwe) {
+                applyBoatForcing(boat, *gCompareSwe, halfW, halfD, gCompareSwe->dt);
                 jwCoupledSubstep(g, halfW, halfD, waveDec, *airy, hTildeSym, hTildePrevHalf, haveHtildePrevHalf,
                                  kGradPenaltyD, 0.25f, kJwDiffuseIters);
-            else
+                sweStepGpu(*gCompareSwe);
+            } else if (kJwCoupledStep) {
+                jwCoupledSubstep(g, halfW, halfD, waveDec, *airy, hTildeSym, hTildePrevHalf, haveHtildePrevHalf,
+                                 kGradPenaltyD, 0.25f, kJwDiffuseIters);
+            } else {
                 sweStepGpu(g);
+            }
         }
         simT += kSubsteps * g.dt;
 
@@ -447,79 +462,106 @@ int main() {
         constexpr double kFroudePrintInterval = 0.25;
         if (simT - lastFroudePrintSimT >= kFroudePrintInterval) {
             lastFroudePrintSimT = simT;
-            const ShallowWaterDiagnostics diag = gridShallowWaterDiagnostics(g, 9.81f);
-            std::printf(
-                "t=%.3f s  Fr_max=%.4f  |u|@Frmax=%.4f m/s  h@Frmax=%.4f m  |u|_max=%.4f  h_min_wet=%.4f m\n",
-                simT, static_cast<double>(diag.fr_max), static_cast<double>(diag.speed_at_fr_max),
-                static_cast<double>(diag.h_at_fr_max), static_cast<double>(diag.speed_max),
-                static_cast<double>(diag.h_min_wet));
+            if (kSplitCompareJwSwe && gCompareSwe) {
+                const ShallowWaterDiagnostics dJw  = gridShallowWaterDiagnostics(g, 9.81f);
+                const ShallowWaterDiagnostics dSwe = gridShallowWaterDiagnostics(*gCompareSwe, 9.81f);
+                std::printf(
+                    "t=%.3f s  JW Fr_max=%.4f  |u|_max=%.4f  h_min_wet=%.4f m  |  SWE Fr_max=%.4f  "
+                    "|u|_max=%.4f  h_min_wet=%.4f m\n",
+                    simT, static_cast<double>(dJw.fr_max), static_cast<double>(dJw.speed_max),
+                    static_cast<double>(dJw.h_min_wet), static_cast<double>(dSwe.fr_max),
+                    static_cast<double>(dSwe.speed_max), static_cast<double>(dSwe.h_min_wet));
+            } else {
+                const ShallowWaterDiagnostics diag = gridShallowWaterDiagnostics(g, 9.81f);
+                std::printf(
+                    "t=%.3f s  Fr_max=%.4f  |u|@Frmax=%.4f m/s  h@Frmax=%.4f m  |u|_max=%.4f  h_min_wet=%.4f m\n",
+                    simT, static_cast<double>(diag.fr_max), static_cast<double>(diag.speed_at_fr_max),
+                    static_cast<double>(diag.h_at_fr_max), static_cast<double>(diag.speed_max),
+                    static_cast<double>(diag.h_min_wet));
+            }
             std::fflush(stdout);
         }
 
-        uploadGridTextures(g, texH, texB);
-
-        float aspect = frame.fbH > 0 ? static_cast<float>(frame.fbW) / static_cast<float>(frame.fbH) : 1.f;
-        const float ang = 0.85f;  // fixed azimuth (no orbit)
-        const float rad = 75.f;
+        const float ang  = 0.85f;  // fixed azimuth (no orbit)
+        const float rad  = 75.f;
         const float eyeY = 38.f;
-        glm::vec3 eye(rad * std::cos(ang), eyeY, rad * std::sin(ang));
-        glm::mat4 proj = glm::perspective(glm::radians(50.f), aspect, 0.1f, 500.f);
-        glm::mat4 view = glm::lookAt(eye, glm::vec3(0.f, 3.5f, 0.f), glm::vec3(0.f, 1.f, 0.f));
-        glm::mat4 mvp = proj * view;
+        glm::vec3         eye(rad * std::cos(ang), eyeY, rad * std::sin(ang));
+        glm::mat4         view = glm::lookAt(eye, glm::vec3(0.f, 3.5f, 0.f), glm::vec3(0.f, 1.f, 0.f));
+
+        auto drawPane = [&](int vpX, int vpW, const Grid& grid, float aspect) {
+            glm::mat4 proj = glm::perspective(glm::radians(50.f), aspect, 0.1f, 500.f);
+            glm::mat4 mvp  = proj * view;
+
+            uploadGridTextures(grid, texH, texB);
+
+            glViewport(vpX, 0, vpW, frame.fbH);
+            if (boatProg) {
+                fillBoatSolidMesh(boatVerts, boat);
+
+                glUseProgram(boatProg);
+                glUniformMatrix4fv(locBoatMVP, 1, GL_FALSE, glm::value_ptr(mvp));
+                glUniform3fv(locBoatLight, 1, glm::value_ptr(lightDir));
+                const glm::vec3 hullColor(0.78f, 0.44f, 0.2f);
+                glUniform3fv(locBoatColor, 1, glm::value_ptr(hullColor));
+                glBindVertexArray(boatVao);
+                glBindBuffer(GL_ARRAY_BUFFER, boatVbo);
+                glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(boatVerts.size() * sizeof(float)),
+                                boatVerts.data());
+                glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(boatVerts.size() / 6));
+                glBindVertexArray(0);
+            }
+
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            glDepthMask(GL_FALSE);
+            glDisable(GL_CULL_FACE);
+
+            glUseProgram(prog);
+            glUniformMatrix4fv(locMVP, 1, GL_FALSE, glm::value_ptr(mvp));
+            glUniform3fv(locLight, 1, glm::value_ptr(lightDir));
+            if (locWaterAlpha >= 0)
+                glUniform1f(locWaterAlpha, 0.84f);
+            if (locDx >= 0)
+                glUniform1f(locDx, kDx);
+            if (locHalfW >= 0)
+                glUniform1f(locHalfW, halfW);
+            if (locHalfD >= 0)
+                glUniform1f(locHalfD, halfD);
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, texH);
+            if (locTexH >= 0)
+                glUniform1i(locTexH, 0);
+            glActiveTexture(GL_TEXTURE1);
+            glBindTexture(GL_TEXTURE_2D, texB);
+            if (locTexB >= 0)
+                glUniform1i(locTexB, 1);
+            glActiveTexture(GL_TEXTURE0);
+
+            glBindVertexArray(vao);
+            glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(indices.size()), GL_UNSIGNED_INT, nullptr);
+            glBindVertexArray(0);
+
+            glDepthMask(GL_TRUE);
+            glDisable(GL_BLEND);
+        };
 
         glViewport(0, 0, frame.fbW, frame.fbH);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
         glDepthMask(GL_TRUE);
         glDisable(GL_CULL_FACE);
-        if (boatProg) {
-            fillBoatSolidMesh(boatVerts, boat);
 
-            glUseProgram(boatProg);
-            glUniformMatrix4fv(locBoatMVP, 1, GL_FALSE, glm::value_ptr(mvp));
-            glUniform3fv(locBoatLight, 1, glm::value_ptr(lightDir));
-            const glm::vec3 hullColor(0.78f, 0.44f, 0.2f);
-            glUniform3fv(locBoatColor, 1, glm::value_ptr(hullColor));
-            glBindVertexArray(boatVao);
-            glBindBuffer(GL_ARRAY_BUFFER, boatVbo);
-            glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(boatVerts.size() * sizeof(float)),
-                            boatVerts.data());
-            glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(boatVerts.size() / 6));
-            glBindVertexArray(0);
+        if (kSplitCompareJwSwe && gCompareSwe) {
+            const int   halfFbW = frame.fbW / 2;
+            const int   restW   = frame.fbW - halfFbW;
+            const float aspectL = frame.fbH > 0 ? static_cast<float>(halfFbW) / static_cast<float>(frame.fbH) : 1.f;
+            const float aspectR = frame.fbH > 0 ? static_cast<float>(restW) / static_cast<float>(frame.fbH) : 1.f;
+            drawPane(0, halfFbW, g, aspectL);
+            drawPane(halfFbW, restW, *gCompareSwe, aspectR);
+        } else {
+            const float aspect =
+                frame.fbH > 0 ? static_cast<float>(frame.fbW) / static_cast<float>(frame.fbH) : 1.f;
+            drawPane(0, frame.fbW, g, aspect);
         }
-
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        glDepthMask(GL_FALSE);
-        glDisable(GL_CULL_FACE);
-
-        glUseProgram(prog);
-        glUniformMatrix4fv(locMVP, 1, GL_FALSE, glm::value_ptr(mvp));
-        glUniform3fv(locLight, 1, glm::value_ptr(lightDir));
-        if (locWaterAlpha >= 0)
-            glUniform1f(locWaterAlpha, 0.84f);
-        if (locDx >= 0)
-            glUniform1f(locDx, kDx);
-        if (locHalfW >= 0)
-            glUniform1f(locHalfW, halfW);
-        if (locHalfD >= 0)
-            glUniform1f(locHalfD, halfD);
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, texH);
-        if (locTexH >= 0)
-            glUniform1i(locTexH, 0);
-        glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, texB);
-        if (locTexB >= 0)
-            glUniform1i(locTexB, 1);
-        glActiveTexture(GL_TEXTURE0);
-
-        glBindVertexArray(vao);
-        glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(indices.size()), GL_UNSIGNED_INT, nullptr);
-        glBindVertexArray(0);
-
-        glDepthMask(GL_TRUE);
-        glDisable(GL_BLEND);
 
         glfwSwapBuffers(window);
         glfwPollEvents();
@@ -534,9 +576,15 @@ int main() {
             }
             char title[256];
             const char* gear = (boat.speed > 0.05f) ? "FWD" : (boat.speed < -0.05f) ? "REV" : "NEU";
-            std::snprintf(title, sizeof title,
-                          "Shallow water | %.0f FPS | %.2f m/s (%s) | throttle %.2f", static_cast<double>(fpsShown),
-                          boat.speed, gear, boat.throttle);
+            if (kSplitCompareJwSwe) {
+                std::snprintf(title, sizeof title,
+                              "JW left | SWE right | %.0f FPS | %.2f m/s (%s) | thr %.2f",
+                              static_cast<double>(fpsShown), boat.speed, gear, boat.throttle);
+            } else {
+                std::snprintf(title, sizeof title,
+                              "Shallow water | %.0f FPS | %.2f m/s (%s) | throttle %.2f",
+                              static_cast<double>(fpsShown), boat.speed, gear, boat.throttle);
+            }
             glfwSetWindowTitle(window, title);
         }
     }

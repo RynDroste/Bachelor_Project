@@ -10,15 +10,13 @@
 
 namespace {
 
-constexpr float kG            = 9.81f;
-constexpr float kDryEps       = 1e-4f;
-constexpr float kMaxSpeed     = 8.f;
-constexpr float kForcingScale = 8.5f;
-constexpr float kTurnGain     = 1.2f;
-// Anisotropic Gaussian in hull frame: exp(-(ax*nx^2 + ay*ny^2)), nx=lx/halfL, ny=ly/halfWb
-// Keep ax modest so bow/stern tips still get forcing (large |nx| was starving the bow visually).
-constexpr float kGaussInvScaleAlong  = 0.95f;
-constexpr float kGaussInvScaleAcross = 5.5f;
+constexpr float kDryEps   = 1e-4f;
+constexpr float kMaxSpeed = 8.f;
+constexpr float kTurnGain = 1.2f;
+// Jeschke & Wojtan 2023: disturbances in q each step beneath the boat (tuned for ~1m cells).
+constexpr float kPointQStrength = 180.f;
+// Lateral (cross-track) half-width in grid cells: m from -k..+k, Gaussian weights, sigma = 1 cell.
+constexpr int kLateralHalfWidthCells = 2;
 
 float sampleH(const Grid& g, int i, int j) {
     i = std::clamp(i, 0, g.NX - 1);
@@ -116,105 +114,66 @@ void updateBoat(Boat& boat, Grid& g, GLFWwindow* window, float halfW, float half
 }
 
 void applyBoatForcing(Boat& boat, Grid& g, float halfW, float halfD, float dt) {
-    const float halfL = boat.length * 0.5f;
-    const float halfWb = boat.width * 0.5f;
-    const float bx = boat.pos.x;
-    const float bz = boat.pos.y;
     const float th = boat.heading;
-    const float co = std::cos(th);
-    const float si = std::sin(th);
-
-    auto worldCorner = [&](float lx, float ly) {
-        float wx = bx + co * lx - si * ly;
-        float wz = bz + si * lx + co * ly;
-        return glm::vec2(wx, wz);
-    };
-
-    glm::vec2 c00 = worldCorner(-halfL, -halfWb);
-    glm::vec2 c01 = worldCorner(-halfL, +halfWb);
-    glm::vec2 c10 = worldCorner(+halfL, -halfWb);
-    glm::vec2 c11 = worldCorner(+halfL, +halfWb);
-
-    float minX = std::min({c00.x, c01.x, c10.x, c11.x});
-    float maxX = std::max({c00.x, c01.x, c10.x, c11.x});
-    float minZ = std::min({c00.y, c01.y, c10.y, c11.y});
-    float maxZ = std::max({c00.y, c01.y, c10.y, c11.y});
-
-    int j0 = static_cast<int>(std::floor((minZ + halfD) / g.dx - 0.5f));
-    int j1 = static_cast<int>(std::ceil((maxZ + halfD) / g.dx - 0.5f));
-    int i0 = static_cast<int>(std::floor((minX + halfW) / g.dx - 0.5f));
-    int i1 = static_cast<int>(std::ceil((maxX + halfW) / g.dx - 0.5f));
-
-    j0 = std::clamp(j0, 1, g.NY - 2);
-    j1 = std::clamp(j1, 1, g.NY - 2);
-    i0 = std::clamp(i0, 1, g.NX - 2);
-    i1 = std::clamp(i1, 1, g.NX - 2);
-    i0 = std::max(1, i0 - 2);
-    i1 = std::min(g.NX - 2, i1 + 2);
-    j0 = std::max(1, j0 - 2);
-    j1 = std::min(g.NY - 2, j1 + 2);
-
-    const float vx = co * boat.speed;
-    const float vz = si * boat.speed;
+    const float vx = std::cos(th) * boat.speed;
+    const float vz = std::sin(th) * boat.speed;
     const float vlen = std::sqrt(vx * vx + vz * vz);
     if (vlen < 1e-4f)
         return;
 
+    const float bx = boat.pos.x;
+    const float bz = boat.pos.y;
+    const float cx = (bx + halfW) / g.dx - 0.5f;
+    const float cy = (bz + halfD) / g.dx - 0.5f;
+    const int ic = std::clamp(static_cast<int>(std::floor(cx)), 1, g.NX - 2);
+    const int jc = std::clamp(static_cast<int>(std::floor(cy)), 1, g.NY - 2);
+
+    if (g.H(ic, jc) < kDryEps)
+        return;
+
     const float dirX = vx / vlen;
     const float dirZ = vz / vlen;
+    const float dq = kPointQStrength * boat.draft * vlen * dt;
 
-    for (int j = j0; j <= j1; ++j) {
-        for (int i = i0; i <= i1; ++i) {
-            float cellX = (static_cast<float>(i) + 0.5f) * g.dx - halfW;
-            float cellZ = (static_cast<float>(j) + 0.5f) * g.dx - halfD;
-            float dxw = cellX - bx;
-            float dzw = cellZ - bz;
-            float lx = co * dxw + si * dzw;
-            float ly = -si * dxw + co * dzw;
+    // Unit perpendicular in the horizontal plane (starboard of velocity).
+    const float px = -dirZ;
+    const float pz = dirX;
 
-            const float nx = lx / std::max(halfL, 1e-4f);
-            const float ny = ly / std::max(halfWb, 1e-4f);
-            const float q =
-                kGaussInvScaleAlong * nx * nx + kGaussInvScaleAcross * ny * ny;
-            const float shapeW = std::exp(-q);
-            if (shapeW < 1e-5f)
-                continue;
+    constexpr float kLatSigmaCells = 1.f;
+    const int wSteps = 2 * kLateralHalfWidthCells + 1;
+    float wsum = 0.f;
+    for (int k = 0; k < wSteps; ++k) {
+        const int m = k - kLateralHalfWidthCells;
+        wsum += std::exp(-0.5f * (static_cast<float>(m * m) / (kLatSigmaCells * kLatSigmaCells)));
+    }
 
-            float hLoc = g.H(i, j);
-            if (hLoc < kDryEps)
-                continue;
+    for (int k = 0; k < wSteps; ++k) {
+        const int m = k - kLateralHalfWidthCells;
+        const float wm =
+            std::exp(-0.5f * (static_cast<float>(m * m) / (kLatSigmaCells * kLatSigmaCells))) / wsum;
 
-            const float speedAbs = std::abs(boat.speed);
-            float froude = speedAbs / std::sqrt(std::max(kG * hLoc, 1e-6f));
-            float forcing = boat.draft * speedAbs * shapeW * kForcingScale;
-            forcing *= (0.82f + 0.22f * std::min(froude, 2.5f));
+        const float sx = bx + static_cast<float>(m) * g.dx * px;
+        const float sz = bz + static_cast<float>(m) * g.dx * pz;
+        const float cxi = (sx + halfW) / g.dx - 0.5f;
+        const float cyi = (sz + halfD) / g.dx - 0.5f;
+        const int i = std::clamp(static_cast<int>(std::floor(cxi)), 1, g.NX - 2);
+        const int j = std::clamp(static_cast<int>(std::floor(cyi)), 1, g.NY - 2);
 
-            // Motion-relative bow/stern: lx>0 is geometric bow; flip when reversing so
-            // "bow" is always upstream along velocity. Previously only a downstream
-            // momentum sink was applied — that favors a stern wake, not bow pile-up.
-            const float nMotion =
-                (lx * std::copysign(1.f, boat.speed)) / std::max(halfL, 1e-4f);
-            const float sternBlend = std::clamp(0.5f - 0.5f * nMotion, 0.f, 1.f);
-            const float bowBlend = std::clamp(0.5f + 0.5f * nMotion, 0.f, 1.f);
+        if (g.H(i, j) < kDryEps)
+            continue;
 
-            const float dStern = forcing * sternBlend * dt;
-            const float dBow = forcing * bowBlend * dt;
+        const float dqm = dq * wm;
 
-            if (dirX >= 0.f) {
-                g.QX(i + 1, j) -= dirX * dStern;
-                g.QX(i, j) += dirX * dBow;
-            } else {
-                g.QX(i, j) -= dirX * dStern;
-                g.QX(i + 1, j) += dirX * dBow;
-            }
-
-            if (dirZ >= 0.f) {
-                g.QY(i, j + 1) -= dirZ * dStern;
-                g.QY(i, j) += dirZ * dBow;
-            } else {
-                g.QY(i, j) -= dirZ * dStern;
-                g.QY(i, j + 1) += dirZ * dBow;
-            }
+        // Volumetric flux q along the velocity direction (one face per axis).
+        if (dirX >= 0.f) {
+            g.QX(i + 1, j) += dqm * dirX;
+        } else {
+            g.QX(i, j) += dqm * dirX;
+        }
+        if (dirZ >= 0.f) {
+            g.QY(i, j + 1) += dqm * dirZ;
+        } else {
+            g.QY(i, j) += dqm * dirZ;
         }
     }
 }

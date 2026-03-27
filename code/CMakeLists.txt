@@ -43,6 +43,7 @@ add_executable(${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/src/airy_cuda_kernels.cu"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/wave_decompose_gpu.cu"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/shallow_water_solver_gpu.cu"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/jw_transport_gpu.cu"
 )
 
 set_target_properties(${PROJECT_NAME} PROPERTIES

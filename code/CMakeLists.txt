@@ -43,7 +43,7 @@ add_executable(${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/src/airy_cuda_kernels.cu"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/wave_decompose_gpu.cu"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/shallow_water_solver_gpu.cu"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/jw_transport_gpu.cu"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/transport_gpu.cu"
 )
 
 set_target_properties(${PROJECT_NAME} PROPERTIES
@@ -112,7 +112,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
 )
 
 # ---------------------------------------------------------------------------
-# Pure SWE dam-break demo (no J&W split, no Airy CUDA)
+# Pure SWE dam-break demo (no wave split, no Airy CUDA)
 # ---------------------------------------------------------------------------
 add_executable(DamSWE
     "${CMAKE_CURRENT_SOURCE_DIR}/src/dam.cpp"
@@ -132,3 +132,16 @@ target_link_libraries(DamSWE PRIVATE
     OpenGL::GL
     CUDA::cudart
 )
+
+# MSVC defaults to CP936; UTF-8 in sources or CUDA headers (e.g. cuda_runtime_api.h) -> C4819 without this.
+# .cu files are built by nvcc, which must forward /utf-8 to the host compiler.
+if(MSVC)
+    foreach(_bp_target IN ITEMS ${PROJECT_NAME} DamSWE)
+        target_compile_options(
+            ${_bp_target}
+            PRIVATE
+                $<$<COMPILE_LANGUAGE:C,CXX>:/utf-8>
+                $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/utf-8>
+        )
+    endforeach()
+endif()

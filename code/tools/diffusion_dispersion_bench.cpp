@@ -1,8 +1,5 @@
-// J&W Fig.9-style sweep: relative phase-speed proxy vs wavelength for several diffusion iteration counts.
-// CSV: niter,wavelength_m,theoretical_phase_speed_m_s,relative_wave_speed
-// theoretical_phase_speed_m_s: Airy c = omega/k at depth h0 (normalization for relative_wave_speed).
-// IC: h = h0 + (eps/sqrt(2))(cos kx + sin kx); at lambda = 2*dx, cos vanishes at cell centers but sin does not.
-// Dual-channel: Ac, As from cos/sin projections; R = hypot(Ac,As); w = Rbar/(Rbar+Rtilde).
+// Phase-speed proxy vs wavelength (diffusion iters); CSV: niter,lambda_m,c_theory_m_s,rel_speed.
+// IC: h=h0+eps(cos kx+sin kx)/sqrt(2); metrics from cos/sin channel amplitudes.
 
 #include "shallow_water_solver.h"
 #include "wavedecomposer.h"

@@ -1,4 +1,4 @@
-// Jeschke & Wojtan 2023 — Algorithm 1 one substep: decompose, bulk SWE, surface Airy, transport, recombine
+// One coupled substep: decompose, SWE, Airy, transport, recombine.
 
 #pragma once
 
@@ -8,7 +8,7 @@ struct Grid;
 struct WaveDecomposition;
 class AiryEWaveFFTW;
 
-void jwCoupledSubstep(Grid& g, float halfW, float halfD,
+void coupledSubstep(Grid& g, float halfW, float halfD,
                       WaveDecomposition& dec,
                       AiryEWaveFFTW& airy,
                       std::vector<float>& hTildeSym,

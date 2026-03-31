@@ -1,4 +1,4 @@
-#include "jw_transport_gpu.hpp"
+#include "transport_gpu.hpp"
 
 #include "shallow_water_solver.h"
 #include "wavedecomposer.h"
@@ -176,7 +176,7 @@ __device__ inline float d_sampleHcell(const float* h, int nx, int ny, float fi, 
 
 // -----------------------------------------------------------------------------
 
-__global__ void jw_transport_qx_damp_k(float* qx_tilde, const float* ha, const float* qxa, const float* qya,
+__global__ void transport_qx_damp_k(float* qx_tilde, const float* ha, const float* qxa, const float* qya,
                                      const float* hb, const float* qxb, const float* qyb, int nx, int ny,
                                      float dx, float gamma, float dt) {
     const int nqx = (nx + 1) * ny;
@@ -198,7 +198,7 @@ __global__ void jw_transport_qx_damp_k(float* qx_tilde, const float* ha, const f
     qx_tilde[tid] *= expf(d_clampExpArg(G * dt));
 }
 
-__global__ void jw_transport_qy_damp_k(float* qy_tilde, const float* ha, const float* qxa, const float* qya,
+__global__ void transport_qy_damp_k(float* qy_tilde, const float* ha, const float* qxa, const float* qya,
                                        const float* hb, const float* qxb, const float* qyb, int nx, int ny,
                                        float dx, float gamma, float dt) {
     const int nqy = nx * (ny + 1);
@@ -220,7 +220,7 @@ __global__ void jw_transport_qy_damp_k(float* qy_tilde, const float* ha, const f
     qy_tilde[tid] *= expf(d_clampExpArg(G * dt));
 }
 
-__global__ void jw_transport_qx_advect_k(float* qx_out, const float* qx_src, const float* ha, const float* qxa,
+__global__ void transport_qx_advect_k(float* qx_out, const float* qx_src, const float* ha, const float* qxa,
                                          const float* qya, const float* hb, const float* qxb, const float* qyb,
                                          int nx, int ny, float dx, float halfW, float halfD, float dt) {
     const int nqx = (nx + 1) * ny;
@@ -241,7 +241,7 @@ __global__ void jw_transport_qx_advect_k(float* qx_out, const float* qx_src, con
     qx_out[tid]    = d_sampleQx(qx_src, nx, ny, fi, fj);
 }
 
-__global__ void jw_transport_qy_advect_k(float* qy_out, const float* qy_src, const float* ha, const float* qxa,
+__global__ void transport_qy_advect_k(float* qy_out, const float* qy_src, const float* ha, const float* qxa,
                                        const float* qya, const float* hb, const float* qxb, const float* qyb, int nx,
                                        int ny, float dx, float halfW, float halfD, float dt) {
     const int nqy = nx * (ny + 1);
@@ -262,7 +262,7 @@ __global__ void jw_transport_qy_advect_k(float* qy_out, const float* qy_src, con
     qy_out[tid]    = d_sampleQy(qy_src, nx, ny, fi, fj);
 }
 
-__global__ void jw_transport_h_damp_k(float* h_tilde, const float* h1, const float* qx1, const float* qy1, int nx,
+__global__ void transport_h_damp_k(float* h_tilde, const float* h1, const float* qx1, const float* qy1, int nx,
                                       int ny, float dx, float gamma, float dt) {
     const int ncell = nx * ny;
     const int tid   = blockIdx.x * blockDim.x + threadIdx.x;
@@ -276,7 +276,7 @@ __global__ void jw_transport_h_damp_k(float* h_tilde, const float* h1, const flo
     h_tilde[tid] *= expf(d_clampExpArg(G * dt));
 }
 
-__global__ void jw_transport_h_advect_k(float* h_out, const float* h_src, const float* h1, const float* qx1,
+__global__ void transport_h_advect_k(float* h_out, const float* h_src, const float* h1, const float* qx1,
                                         const float* qy1, int nx, int ny, float dx, float halfW, float halfD,
                                         float dt) {
     const int ncell = nx * ny;
@@ -366,13 +366,13 @@ JtGpuScratch g_jt;
 
 } // namespace
 
-void jwTransportSurfaceGpu(WaveDecomposition& dec, const Grid& gBar0, const Grid& gBar1, float halfW, float halfD,
+void transportSurfaceGpu(WaveDecomposition& dec, const Grid& gBar0, const Grid& gBar1, float halfW, float halfD,
                            float dt, float gamma) {
     JT_CUDA_CHECK(cudaSetDevice(0));
     const int nx = gBar0.NX;
     const int ny = gBar0.NY;
     if (nx != gBar1.NX || ny != gBar1.NY || gBar0.dx != gBar1.dx) {
-        std::fprintf(stderr, "jwTransportSurfaceGpu: grid size mismatch\n");
+        std::fprintf(stderr, "transportSurfaceGpu: grid size mismatch\n");
         std::abort();
     }
     const float dx = gBar0.dx;
@@ -397,35 +397,35 @@ void jwTransportSurfaceGpu(WaveDecomposition& dec, const Grid& gBar0, const Grid
     const int     nqyN    = static_cast<int>(nqy);
     const int     ncellN  = static_cast<int>(ncell);
 
-    jw_transport_qx_damp_k<<<jt_blocks_for(nqxN, threads), threads>>>(
+    transport_qx_damp_k<<<jt_blocks_for(nqxN, threads), threads>>>(
         g_jt.d_qx_tilde, g_jt.d_h0, g_jt.d_qx0, g_jt.d_qy0, g_jt.d_h1, g_jt.d_qx1, g_jt.d_qy1, nx, ny, dx, gamma, dt);
     JT_POST_KERNEL();
 
-    jw_transport_qy_damp_k<<<jt_blocks_for(nqyN, threads), threads>>>(
+    transport_qy_damp_k<<<jt_blocks_for(nqyN, threads), threads>>>(
         g_jt.d_qy_tilde, g_jt.d_h0, g_jt.d_qx0, g_jt.d_qy0, g_jt.d_h1, g_jt.d_qx1, g_jt.d_qy1, nx, ny, dx, gamma, dt);
     JT_POST_KERNEL();
 
     JT_CUDA_CHECK(
         cudaMemcpy(g_jt.d_qx_saved, g_jt.d_qx_tilde, nqx * sizeof(float), cudaMemcpyDeviceToDevice));
-    jw_transport_qx_advect_k<<<jt_blocks_for(nqxN, threads), threads>>>(
+    transport_qx_advect_k<<<jt_blocks_for(nqxN, threads), threads>>>(
         g_jt.d_qx_tilde, g_jt.d_qx_saved, g_jt.d_h0, g_jt.d_qx0, g_jt.d_qy0, g_jt.d_h1, g_jt.d_qx1, g_jt.d_qy1, nx, ny,
         dx, halfW, halfD, dt);
     JT_POST_KERNEL();
 
     JT_CUDA_CHECK(
         cudaMemcpy(g_jt.d_qy_saved, g_jt.d_qy_tilde, nqy * sizeof(float), cudaMemcpyDeviceToDevice));
-    jw_transport_qy_advect_k<<<jt_blocks_for(nqyN, threads), threads>>>(
+    transport_qy_advect_k<<<jt_blocks_for(nqyN, threads), threads>>>(
         g_jt.d_qy_tilde, g_jt.d_qy_saved, g_jt.d_h0, g_jt.d_qx0, g_jt.d_qy0, g_jt.d_h1, g_jt.d_qx1, g_jt.d_qy1, nx, ny,
         dx, halfW, halfD, dt);
     JT_POST_KERNEL();
 
-    jw_transport_h_damp_k<<<jt_blocks_for(ncellN, threads), threads>>>(
+    transport_h_damp_k<<<jt_blocks_for(ncellN, threads), threads>>>(
         g_jt.d_h_tilde, g_jt.d_h1, g_jt.d_qx1, g_jt.d_qy1, nx, ny, dx, gamma, dt);
     JT_POST_KERNEL();
 
     JT_CUDA_CHECK(
         cudaMemcpy(g_jt.d_h_saved, g_jt.d_h_tilde, ncell * sizeof(float), cudaMemcpyDeviceToDevice));
-    jw_transport_h_advect_k<<<jt_blocks_for(ncellN, threads), threads>>>(
+    transport_h_advect_k<<<jt_blocks_for(ncellN, threads), threads>>>(
         g_jt.d_h_tilde, g_jt.d_h_saved, g_jt.d_h1, g_jt.d_qx1, g_jt.d_qy1, nx, ny, dx, halfW, halfD, dt);
     JT_POST_KERNEL();
 

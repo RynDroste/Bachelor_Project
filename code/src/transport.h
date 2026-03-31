@@ -3,8 +3,8 @@
 struct Grid;
 struct WaveDecomposition;
 
-// gBar0 / gBar1: bulk grid before / after SWE within the same step (same bathymetry)
-void jwTransportSurface(WaveDecomposition& dec,
+// Bar state before/after SWE in the same step.
+void transportSurface(WaveDecomposition& dec,
                        const Grid&       gBar0,
                        const Grid&       gBar1,
                        float               halfW,

@@ -6,7 +6,7 @@
 
 #include "airy_fftw.h"
 #include "boat.h"
-#include "jw_pipeline.h"
+#include "pipeline.h"
 #include "shallow_water_solver.h"
 #include "wavedecomposer.h"
 #include <cmath>
@@ -21,19 +21,17 @@ constexpr int   kNy = 128;
 constexpr float kDx = 1.0f;
 constexpr float kDt = 1.0f / 120.0f;
 constexpr int   kSubsteps = 2;
-// false: Stelling & Duinmeijer only (sweStep); true: full J&W (decompose, SWE, Airy, transport, recombine)
-constexpr bool  kJwCoupledStep = true;
-// true: run J&W on g and plain SWE on a second grid, split-screen left/right in one frame (cost ~2× sim).
-// When true, kJwCoupledStep only affects the left pane; the right pane is always sweStepGpu.
-constexpr bool  kSplitCompareJwSwe = true;
-constexpr float kGradPenaltyD = 0.25f; 
-constexpr bool  kVsync          = true; // true: FPS capped at monitor refresh (~60/120)
-// J&W wave low-pass diffusion iterations per substep (header default was 128; lower = much faster).
-constexpr int   kJwDiffuseIters = 8;
+// false: SWE only; true: coupled (decompose, SWE, Airy, transport, recombine).
+constexpr bool  kCoupledStep = true;
+// Split view: coupled left, SWE right (~2x cost); left pane only uses kCoupledStep.
+constexpr bool  kSplitCompareSwe = true;
+constexpr float kGradPenaltyD = 0.25f;
+constexpr bool  kVsync          = true; // vsync caps FPS near monitor refresh
+constexpr int   kWaveDiffuseIters = 8;  // wave diffusion iters per substep (default in header: 128)
 
 static const char* kVertSrc = R"GLSL(
 #version 330 core
-// Static per-vertex corner indices (cell-corner grid); H/B from textures (GPU height field).
+// Corner IJ; H/B from textures.
 layout (location = 0) in vec2 aCornerIJ;
 uniform mat4 uMVP;
 uniform float uDx;
@@ -356,15 +354,15 @@ int main() {
 
     Grid                      g(kNx, kNy, kDx, kDt);
     std::unique_ptr<Grid>     gCompareSwe;
-    if (kSplitCompareJwSwe)
+    if (kSplitCompareSwe)
         gCompareSwe = std::make_unique<Grid>(kNx, kNy, kDx, kDt);
     WaveDecomposition waveDec;
-    // Airy: tilde h and q aligned at step t via symmetrized (h^{t-dt/2}+h^{t+dt/2})/2 from successive decompositions
+    // Airy: symmetrized h_tilde across substeps.
     std::vector<float> hTildePrevHalf;
     std::vector<float> hTildeSym;
     bool               haveHtildePrevHalf = false;
     std::unique_ptr<AiryEWaveFFTW> airy;
-    if (kJwCoupledStep || kSplitCompareJwSwe)
+    if (kCoupledStep || kSplitCompareSwe)
         airy = std::make_unique<AiryEWaveFFTW>(kNx, kNy, kDx);
     const float halfW = 0.5f * kNx * kDx;
     const float halfD = 0.5f * kNy * kDx;
@@ -444,14 +442,14 @@ int main() {
         for (int s = 0; s < kSubsteps; ++s) {
             updateBoat(boat, g, window, halfW, halfD, g.dt, manualControl);
             applyBoatForcing(boat, g, halfW, halfD, g.dt);
-            if (kSplitCompareJwSwe) {
+            if (kSplitCompareSwe) {
                 applyBoatForcing(boat, *gCompareSwe, halfW, halfD, gCompareSwe->dt);
-                jwCoupledSubstep(g, halfW, halfD, waveDec, *airy, hTildeSym, hTildePrevHalf, haveHtildePrevHalf,
-                                 kGradPenaltyD, 0.25f, kJwDiffuseIters);
+                coupledSubstep(g, halfW, halfD, waveDec, *airy, hTildeSym, hTildePrevHalf, haveHtildePrevHalf,
+                                 kGradPenaltyD, 0.25f, kWaveDiffuseIters);
                 sweStepGpu(*gCompareSwe);
-            } else if (kJwCoupledStep) {
-                jwCoupledSubstep(g, halfW, halfD, waveDec, *airy, hTildeSym, hTildePrevHalf, haveHtildePrevHalf,
-                                 kGradPenaltyD, 0.25f, kJwDiffuseIters);
+            } else if (kCoupledStep) {
+                coupledSubstep(g, halfW, halfD, waveDec, *airy, hTildeSym, hTildePrevHalf, haveHtildePrevHalf,
+                                 kGradPenaltyD, 0.25f, kWaveDiffuseIters);
             } else {
                 sweStepGpu(g);
             }
@@ -462,14 +460,14 @@ int main() {
         constexpr double kFroudePrintInterval = 0.25;
         if (simT - lastFroudePrintSimT >= kFroudePrintInterval) {
             lastFroudePrintSimT = simT;
-            if (kSplitCompareJwSwe && gCompareSwe) {
-                const ShallowWaterDiagnostics dJw  = gridShallowWaterDiagnostics(g, 9.81f);
-                const ShallowWaterDiagnostics dSwe = gridShallowWaterDiagnostics(*gCompareSwe, 9.81f);
+            if (kSplitCompareSwe && gCompareSwe) {
+                const ShallowWaterDiagnostics dCoupled = gridShallowWaterDiagnostics(g, 9.81f);
+                const ShallowWaterDiagnostics dSwe    = gridShallowWaterDiagnostics(*gCompareSwe, 9.81f);
                 std::printf(
-                    "t=%.3f s  JW Fr_max=%.4f  |u|_max=%.4f  h_min_wet=%.4f m  |  SWE Fr_max=%.4f  "
+                    "t=%.3f s  coupled Fr_max=%.4f  |u|_max=%.4f  h_min_wet=%.4f m  |  SWE Fr_max=%.4f  "
                     "|u|_max=%.4f  h_min_wet=%.4f m\n",
-                    simT, static_cast<double>(dJw.fr_max), static_cast<double>(dJw.speed_max),
-                    static_cast<double>(dJw.h_min_wet), static_cast<double>(dSwe.fr_max),
+                    simT, static_cast<double>(dCoupled.fr_max), static_cast<double>(dCoupled.speed_max),
+                    static_cast<double>(dCoupled.h_min_wet), static_cast<double>(dSwe.fr_max),
                     static_cast<double>(dSwe.speed_max), static_cast<double>(dSwe.h_min_wet));
             } else {
                 const ShallowWaterDiagnostics diag = gridShallowWaterDiagnostics(g, 9.81f);
@@ -482,7 +480,7 @@ int main() {
             std::fflush(stdout);
         }
 
-        const float ang  = 0.85f;  // fixed azimuth (no orbit)
+        const float ang  = 0.85f;
         const float rad  = 75.f;
         const float eyeY = 38.f;
         glm::vec3         eye(rad * std::cos(ang), eyeY, rad * std::sin(ang));
@@ -550,7 +548,7 @@ int main() {
         glDepthMask(GL_TRUE);
         glDisable(GL_CULL_FACE);
 
-        if (kSplitCompareJwSwe && gCompareSwe) {
+        if (kSplitCompareSwe && gCompareSwe) {
             const int   halfFbW = frame.fbW / 2;
             const int   restW   = frame.fbW - halfFbW;
             const float aspectL = frame.fbH > 0 ? static_cast<float>(halfFbW) / static_cast<float>(frame.fbH) : 1.f;
@@ -576,9 +574,9 @@ int main() {
             }
             char title[256];
             const char* gear = (boat.speed > 0.05f) ? "FWD" : (boat.speed < -0.05f) ? "REV" : "NEU";
-            if (kSplitCompareJwSwe) {
+            if (kSplitCompareSwe) {
                 std::snprintf(title, sizeof title,
-                              "JW left | SWE right | %.0f FPS | %.2f m/s (%s) | thr %.2f",
+                              "Coupled left | SWE right | %.0f FPS | %.2f m/s (%s) | thr %.2f",
                               static_cast<double>(fpsShown), boat.speed, gear, boat.throttle);
             } else {
                 std::snprintf(title, sizeof title,

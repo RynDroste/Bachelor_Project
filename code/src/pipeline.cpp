@@ -1,7 +1,7 @@
-#include "jw_pipeline.h"
+#include "pipeline.h"
 
 #include "airy_fftw.h"
-#include "jw_transport.h"
+#include "transport.h"
 #include "shallow_water_solver.h"
 #include "wavedecomposer.h"
 
@@ -10,7 +10,7 @@
 
 namespace {
 
-// Reuse bar-state grids across substeps (avoids two large heap allocs per jwCoupledSubstep).
+// Reuse bar grids across substeps.
 struct BarGridScratch {
     std::unique_ptr<Grid> gBar0;
     std::unique_ptr<Grid> gBar1;
@@ -42,7 +42,7 @@ void assignBarState(Grid& dst, const Grid& terrainSrc, const WaveDecomposition& 
 
 } // namespace
 
-void jwCoupledSubstep(Grid& g, float halfW, float halfD,
+void coupledSubstep(Grid& g, float halfW, float halfD,
                       WaveDecomposition& dec,
                       AiryEWaveFFTW& airy,
                       std::vector<float>& hTildeSym,
@@ -76,7 +76,7 @@ void jwCoupledSubstep(Grid& g, float halfW, float halfD,
 
     airy.step(dt, 9.81f, hTildeSym.data(), dec.h_bar.data(), dec.qx_tilde.data(), dec.qy_tilde.data());
 
-    jwTransportSurface(dec, gBar0, gBar1, halfW, halfD, dt, transportGamma);
+    transportSurface(dec, gBar0, gBar1, halfW, halfD, dt, transportGamma);
 
     std::copy(dec.h_tilde.begin(), dec.h_tilde.end(), hTildePrevHalf.begin());
     haveHtildePrevHalf = true;

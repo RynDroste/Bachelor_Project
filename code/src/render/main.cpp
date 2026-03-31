@@ -4,12 +4,12 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
-#include "airy_fftw.h"
-#include "boat.h"
-#include "pipeline.h"
-#include "shallow_water_solver.h"
-#include "shader_file.h"
-#include "wavedecomposer.h"
+#include "solver_pipeline/airy_fftw.h"
+#include "solver_pipeline/pipeline.h"
+#include "render/boat.h"
+#include "render/shader_file.h"
+#include "solver_pipeline/shallow_water_solver.h"
+#include "solver_pipeline/wavedecomposer.h"
 #include <cmath>
 #include <cstdio>
 #include <memory>

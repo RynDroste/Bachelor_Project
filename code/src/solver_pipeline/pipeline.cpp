@@ -1,9 +1,9 @@
-#include "pipeline.h"
+#include "solver_pipeline/pipeline.h"
 
-#include "airy_fftw.h"
-#include "transport.h"
-#include "shallow_water_solver.h"
-#include "wavedecomposer.h"
+#include "solver_pipeline/airy_fftw.h"
+#include "solver_pipeline/transport.h"
+#include "solver_pipeline/shallow_water_solver.h"
+#include "solver_pipeline/wavedecomposer.h"
 
 #include <algorithm>
 #include <memory>

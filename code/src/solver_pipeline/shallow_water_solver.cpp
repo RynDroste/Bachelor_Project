@@ -1,4 +1,4 @@
-#include "shallow_water_solver.h"
+#include "solver_pipeline/shallow_water_solver.h"
 
 #include <cmath>
 

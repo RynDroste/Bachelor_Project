@@ -1,9 +1,10 @@
 // Phase-speed proxy vs wavelength (diffusion iters); CSV: niter,lambda_m,c_theory_m_s,rel_speed.
 // IC: h=h0+eps(cos kx+sin kx)/sqrt(2); metrics from cos/sin channel amplitudes.
 
-#include "shallow_water_solver.h"
-#include "wavedecomposer.h"
+#include "solver_pipeline/shallow_water_solver.h"
+#include "solver_pipeline/wavedecomposer.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <vector>

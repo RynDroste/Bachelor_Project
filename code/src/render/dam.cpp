@@ -4,8 +4,8 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
-#include "shader_file.h"
-#include "shallow_water_solver.h"
+#include "render/shader_file.h"
+#include "solver_pipeline/shallow_water_solver.h"
 
 #include <algorithm>
 #include <cmath>

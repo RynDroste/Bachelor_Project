@@ -5,7 +5,7 @@
 
 #pragma once
 
-#include "shallow_water_solver.h"
+#include "solver_pipeline/shallow_water_solver.h"
 
 #include <vector>
 

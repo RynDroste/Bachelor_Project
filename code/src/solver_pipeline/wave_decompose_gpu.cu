@@ -1,8 +1,8 @@
 // GPU wave decomposition (Jeschke & Wojtan-style low-pass / tilde split).
 
-#include "wave_decompose_gpu.hpp"
+#include "solver_pipeline/wave_decompose_gpu.hpp"
 
-#include "wavedecomposer.h"
+#include "solver_pipeline/wavedecomposer.h"
 
 #include <algorithm>
 #include <cstdio>

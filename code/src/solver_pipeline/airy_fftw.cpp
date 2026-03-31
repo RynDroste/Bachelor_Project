@@ -1,6 +1,6 @@
-#include "airy_fftw.h"
+#include "solver_pipeline/airy_fftw.h"
 
-#include "airy_cuda_kernels.hpp"
+#include "solver_pipeline/airy_cuda_kernels.hpp"
 
 #include <cstdio>
 

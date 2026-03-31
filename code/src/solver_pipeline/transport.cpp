@@ -1,6 +1,6 @@
-#include "transport.h"
+#include "solver_pipeline/transport.h"
 
-#include "transport_gpu.hpp"
+#include "solver_pipeline/transport_gpu.hpp"
 
 void transportSurface(WaveDecomposition& dec,
                        const Grid&       gBar0,

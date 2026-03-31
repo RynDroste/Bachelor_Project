@@ -1,6 +1,6 @@
-#include "boat.h"
+#include "render/boat.h"
 
-#include "shallow_water_solver.h"
+#include "solver_pipeline/shallow_water_solver.h"
 
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>

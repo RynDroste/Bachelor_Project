@@ -1,7 +1,7 @@
-#include "transport_gpu.hpp"
+#include "solver_pipeline/transport_gpu.hpp"
 
-#include "shallow_water_solver.h"
-#include "wavedecomposer.h"
+#include "solver_pipeline/shallow_water_solver.h"
+#include "solver_pipeline/wavedecomposer.h"
 
 #include <cstdio>
 #include <cuda_runtime.h>

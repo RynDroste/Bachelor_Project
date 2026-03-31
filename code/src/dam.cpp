@@ -4,11 +4,13 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
+#include "shader_file.h"
 #include "shallow_water_solver.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <string>
 #include <vector>
 
 namespace {
@@ -43,133 +45,6 @@ constexpr glm::vec3 kFixedCamPos(44.03f, 61.59f, -2.16f);
 constexpr float kFixedCamYawDeg = -180.48f;
 constexpr float kFixedCamPitchDeg = -49.76f;
 constexpr float kFixedCamFovDeg = 32.80f;
-
-static const char* kVertSrc = R"GLSL(
-#version 330 core
-layout (location = 0) in vec2 aCornerIJ;
-uniform mat4 uMVP;
-uniform float uDx;
-uniform float uHalfW;
-uniform float uHalfD;
-uniform sampler2D uH;
-uniform sampler2D uB;
-uniform float uWetDepthEps;
-out vec3 vWorldPos;
-out float vDepth;
-out float vWetFrac;
-void main() {
-    int vi = int(aCornerIJ.x + 0.0001);
-    int vj = int(aCornerIJ.y + 0.0001);
-    ivec2 sz = textureSize(uH, 0);
-    int NX = sz.x;
-    int NY = sz.y;
-    // Weighted blend instead of hv > eps hard split: reduces stair-steps and spikes where
-    // wet/dry toggles cell-by-cell along a wall (purely mesh/shading; solver unchanged).
-    float sumSurf = 0.0;
-    float sumH = 0.0;
-    float sumW = 0.0;
-    float wLo = uWetDepthEps * 0.3;
-    float wHi = uWetDepthEps * 1.6;
-    for (int di = -1; di <= 0; ++di) {
-        for (int dj = -1; dj <= 0; ++dj) {
-            int ci = vi + di;
-            int cj = vj + dj;
-            if (ci >= 0 && ci < NX && cj >= 0 && cj < NY) {
-                float hv = texelFetch(uH, ivec2(ci, cj), 0).r;
-                float bv = texelFetch(uB, ivec2(ci, cj), 0).r;
-                float w = smoothstep(wLo, wHi, max(hv, 0.0));
-                sumSurf += w * (bv + hv);
-                sumH += w * hv;
-                sumW += w;
-            }
-        }
-    }
-    float y = 0.0;
-    float hAvg = 0.0;
-    if (sumW > 1e-6) {
-        y = sumSurf / sumW;
-        hAvg = sumH / sumW;
-    } else {
-        // Fully dry corner: sample nearby bed only so no phantom water sheet appears.
-        float sumBed = 0.0;
-        int cntBed = 0;
-        for (int di = -1; di <= 0; ++di) {
-            for (int dj = -1; dj <= 0; ++dj) {
-                int ci = vi + di;
-                int cj = vj + dj;
-                if (ci >= 0 && ci < NX && cj >= 0 && cj < NY) {
-                    sumBed += texelFetch(uB, ivec2(ci, cj), 0).r;
-                    cntBed++;
-                }
-            }
-        }
-        y = (cntBed > 0) ? (sumBed / float(cntBed)) : 0.0;
-    }
-    vWetFrac = sumW * 0.25;
-    float wx = float(vi) * uDx - uHalfW;
-    float wz = float(vj) * uDx - uHalfD;
-    vWorldPos = vec3(wx, y, wz);
-    vDepth = hAvg;
-    gl_Position = uMVP * vec4(vWorldPos, 1.0);
-}
-)GLSL";
-
-static const char* kFragSrc = R"GLSL(
-#version 330 core
-in vec3 vWorldPos;
-in float vDepth;
-in float vWetFrac;
-uniform vec3 uLightDir;
-uniform float uAlpha;
-uniform float uWetDepthEps;
-out vec4 FragColor;
-void main() {
-    // Soft edge: avoid a hard horizontal "void" cut when h or wet corner count is marginal.
-    float dFade = smoothstep(0.0, uWetDepthEps * 2.5, max(vDepth, 0.0));
-    float wFade = smoothstep(0.10, 0.30, vWetFrac);
-    float a = uAlpha * dFade * wFade;
-    if (a < 0.012)
-        discard;
-    vec3 nx = dFdx(vWorldPos);
-    vec3 ny = dFdy(vWorldPos);
-    vec3 N = normalize(cross(nx, ny));
-    float t = clamp(vDepth / 5.0, 0.0, 1.0);
-    vec3 shallow = vec3(0.32, 0.78, 0.96);
-    vec3 deep = vec3(0.03, 0.14, 0.33);
-    vec3 base = mix(deep, shallow, t);
-    vec3 L = normalize(uLightDir);
-    float ndl = max(dot(N, L), 0.0);
-    vec3 rgb = base * (0.2 + 0.8 * ndl);
-    FragColor = vec4(rgb, a);
-}
-)GLSL";
-
-static const char* kSolidVert = R"GLSL(
-#version 330 core
-layout (location = 0) in vec3 aPos;
-layout (location = 1) in vec3 aNrm;
-uniform mat4 uMVP;
-out vec3 vNrm;
-void main() {
-    vNrm = aNrm;
-    gl_Position = uMVP * vec4(aPos, 1.0);
-}
-)GLSL";
-
-static const char* kSolidFrag = R"GLSL(
-#version 330 core
-in vec3 vNrm;
-uniform vec3 uLightDir;
-uniform vec3 uBaseColor;
-out vec4 FragColor;
-void main() {
-    vec3 N = normalize(vNrm);
-    vec3 L = normalize(uLightDir);
-    float ndl = max(dot(N, L), 0.0);
-    vec3 rgb = uBaseColor * (0.25 + 0.75 * ndl);
-    FragColor = vec4(rgb, 1.0);
-}
-)GLSL";
 
 GLuint compileShader(GLenum type, const char* src) {
     GLuint s = glCreateShader(type);
@@ -429,13 +304,30 @@ int main() {
     glfwSetFramebufferSizeCallback(window, framebufferSizeCB);
     glfwGetFramebufferSize(window, &frame.fbW, &frame.fbH);
 
-    GLuint prog = makeProgram(kVertSrc, kFragSrc);
+    std::string damWvs = loadTextFile(shaderPath("dam_water.vert"));
+    std::string damWfs = loadTextFile(shaderPath("dam_water.frag"));
+    if (damWvs.empty() || damWfs.empty()) {
+        std::fprintf(stderr, "failed to load dam water shaders (tried %s)\n", shaderPath("dam_water.vert").c_str());
+        glfwDestroyWindow(window);
+        glfwTerminate();
+        return 1;
+    }
+    GLuint prog = makeProgram(damWvs.c_str(), damWfs.c_str());
     if (!prog) {
         glfwDestroyWindow(window);
         glfwTerminate();
         return 1;
     }
-    GLuint solidProg = makeProgram(kSolidVert, kSolidFrag);
+    std::string solidVs = loadTextFile(shaderPath("dam_solid.vert"));
+    std::string solidFs = loadTextFile(shaderPath("dam_solid.frag"));
+    if (solidVs.empty() || solidFs.empty()) {
+        std::fprintf(stderr, "failed to load dam solid shaders (tried %s)\n", shaderPath("dam_solid.vert").c_str());
+        glDeleteProgram(prog);
+        glfwDestroyWindow(window);
+        glfwTerminate();
+        return 1;
+    }
+    GLuint solidProg = makeProgram(solidVs.c_str(), solidFs.c_str());
     if (!solidProg) {
         glDeleteProgram(prog);
         glfwDestroyWindow(window);
@@ -582,7 +474,7 @@ int main() {
         glUniform1f(locDx, kDx);
         glUniform1f(locHalfW, halfW);
         glUniform1f(locHalfD, halfD);
-        // Same kWetDepthEps: vertex wet mask; fragment also uses 2.5 * uWetDepthEps for depth fade (kFragSrc).
+        // Same kWetDepthEps: vertex wet mask; fragment uses 2.5 * uWetDepthEps for depth fade (dam_water.frag).
         glUniform1f(locWetEps, kWetDepthEps);
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, texH);

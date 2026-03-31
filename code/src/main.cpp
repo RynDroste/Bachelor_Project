@@ -8,10 +8,12 @@
 #include "boat.h"
 #include "pipeline.h"
 #include "shallow_water_solver.h"
+#include "shader_file.h"
 #include "wavedecomposer.h"
 #include <cmath>
 #include <cstdio>
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace {
@@ -28,101 +30,6 @@ constexpr bool  kSplitCompareSwe = true;
 constexpr float kGradPenaltyD = 0.25f;
 constexpr bool  kVsync          = true; // vsync caps FPS near monitor refresh
 constexpr int   kWaveDiffuseIters = 8;  // wave diffusion iters per substep (default in header: 128)
-
-static const char* kVertSrc = R"GLSL(
-#version 330 core
-// Corner IJ; H/B from textures.
-layout (location = 0) in vec2 aCornerIJ;
-uniform mat4 uMVP;
-uniform float uDx;
-uniform float uHalfW;
-uniform float uHalfD;
-uniform sampler2D uH;
-uniform sampler2D uB;
-out vec3 vWorldPos;
-out float vDepth;
-void main() {
-    int vi = int(aCornerIJ.x + 0.0001);
-    int vj = int(aCornerIJ.y + 0.0001);
-    ivec2 sz = textureSize(uH, 0);
-    int NX = sz.x;
-    int NY = sz.y;
-    float sumSurf = 0.0;
-    float sumH = 0.0;
-    int cntSurf = 0;
-    int cntH = 0;
-    for (int di = -1; di <= 0; ++di) {
-        for (int dj = -1; dj <= 0; ++dj) {
-            int ci = vi + di;
-            int cj = vj + dj;
-            if (ci >= 0 && ci < NX && cj >= 0 && cj < NY) {
-                float hv = texelFetch(uH, ivec2(ci, cj), 0).r;
-                float bv = texelFetch(uB, ivec2(ci, cj), 0).r;
-                sumSurf += bv + hv;
-                sumH += hv;
-                cntSurf++;
-                cntH++;
-            }
-        }
-    }
-    float y = cntSurf > 0 ? sumSurf / float(cntSurf) : 0.0;
-    float hAvg = cntH > 0 ? sumH / float(cntH) : 0.0;
-    float wx = float(vi) * uDx - uHalfW;
-    float wz = float(vj) * uDx - uHalfD;
-    vWorldPos = vec3(wx, y, wz);
-    vDepth = hAvg;
-    gl_Position = uMVP * vec4(vWorldPos, 1.0);
-}
-)GLSL";
-
-static const char* kFragSrc = R"GLSL(
-#version 330 core
-in vec3 vWorldPos;
-in float vDepth;
-uniform vec3 uLightDir;
-uniform float uAlpha;
-out vec4 FragColor;
-void main() {
-    vec3 nx = dFdx(vWorldPos);
-    vec3 ny = dFdy(vWorldPos);
-    vec3 N = normalize(cross(nx, ny));
-    float t = clamp(vDepth / 4.0, 0.0, 1.0);
-    vec3 shallow = vec3(0.28, 0.75, 0.95);
-    vec3 deep = vec3(0.02, 0.14, 0.32);
-    vec3 base = mix(deep, shallow, t);
-    vec3 L = normalize(uLightDir);
-    float ndl = max(dot(N, L), 0.0);
-    vec3 rgb = base * (0.22 + 0.78 * ndl);
-    FragColor = vec4(rgb, uAlpha);
-}
-)GLSL";
-
-static const char* kBoatVert = R"GLSL(
-#version 330 core
-layout (location = 0) in vec3 aPos;
-layout (location = 1) in vec3 aNrm;
-uniform mat4 uMVP;
-out vec3 vNrm;
-void main() {
-    vNrm = aNrm;
-    gl_Position = uMVP * vec4(aPos, 1.0);
-}
-)GLSL";
-
-static const char* kBoatFrag = R"GLSL(
-#version 330 core
-in vec3 vNrm;
-uniform vec3 uLightDir;
-uniform vec3 uBaseColor;
-out vec4 FragColor;
-void main() {
-    vec3 N = normalize(vNrm);
-    vec3 L = normalize(uLightDir);
-    float ndl = max(dot(N, L), 0.0);
-    vec3 rgb = uBaseColor * (0.28 + 0.72 * ndl);
-    FragColor = vec4(rgb, 1.0);
-}
-)GLSL";
 
 GLuint compileShader(GLenum type, const char* src) {
     GLuint s = glCreateShader(type);
@@ -337,7 +244,15 @@ int main() {
     glfwSetFramebufferSizeCallback(window, framebufferSizeCB);
     glfwGetFramebufferSize(window, &frame.fbW, &frame.fbH);
 
-    GLuint prog = makeProgram(kVertSrc, kFragSrc);
+    std::string waterVs = loadTextFile(shaderPath("water_surface.vert"));
+    std::string waterFs = loadTextFile(shaderPath("water_surface.frag"));
+    if (waterVs.empty() || waterFs.empty()) {
+        std::fprintf(stderr, "failed to load water shaders (tried %s)\n", shaderPath("water_surface.vert").c_str());
+        glfwDestroyWindow(window);
+        glfwTerminate();
+        return 1;
+    }
+    GLuint prog = makeProgram(waterVs.c_str(), waterFs.c_str());
     if (!prog) {
         glfwDestroyWindow(window);
         glfwTerminate();
@@ -400,7 +315,14 @@ int main() {
     glEnableVertexAttribArray(0);
     glBindVertexArray(0);
 
-    GLuint boatProg = makeProgram(kBoatVert, kBoatFrag);
+    std::string boatVs = loadTextFile(shaderPath("boat.vert"));
+    std::string boatFs = loadTextFile(shaderPath("boat.frag"));
+    GLuint      boatProg = 0;
+    if (!boatVs.empty() && !boatFs.empty())
+        boatProg = makeProgram(boatVs.c_str(), boatFs.c_str());
+    if (!boatProg)
+        std::fprintf(stderr, "warning: boat shaders missing or failed to compile (tried %s)\n",
+                     shaderPath("boat.vert").c_str());
     GLint locBoatMVP = boatProg ? glGetUniformLocation(boatProg, "uMVP") : -1;
     GLint locBoatLight = boatProg ? glGetUniformLocation(boatProg, "uLightDir") : -1;
     GLint locBoatColor = boatProg ? glGetUniformLocation(boatProg, "uBaseColor") : -1;

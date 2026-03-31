@@ -111,11 +111,9 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     CUDA::cufft
 )
 
-# ---------------------------------------------------------------------------
-# Pure SWE dam-break demo (no wave split, no Airy CUDA)
-# ---------------------------------------------------------------------------
 add_executable(DamSWE
     "${CMAKE_CURRENT_SOURCE_DIR}/src/dam.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/shader_file.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/shallow_water_solver.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/shallow_water_solver_gpu.cu"
     "${CMAKE_CURRENT_SOURCE_DIR}/external/glad/src/glad.c"
@@ -132,6 +130,13 @@ target_link_libraries(DamSWE PRIVATE
     OpenGL::GL
     CUDA::cudart
 )
+
+# Absolute path so executables find code/shaders/ regardless of current working directory.
+set(BP_SHADERS_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/shaders")
+string(REPLACE "\\" "/" BP_SHADERS_ROOT "${BP_SHADERS_ROOT}")
+foreach(_bp_target IN ITEMS ${PROJECT_NAME} DamSWE)
+    target_compile_definitions(${_bp_target} PRIVATE "BP_SHADER_ROOT=\"${BP_SHADERS_ROOT}\"")
+endforeach()
 
 # MSVC defaults to CP936; UTF-8 in sources or CUDA headers (e.g. cuda_runtime_api.h) -> C4819 without this.
 # .cu files are built by nvcc, which must forward /utf-8 to the host compiler.

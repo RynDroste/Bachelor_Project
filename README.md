@@ -70,12 +70,7 @@ $$
 
 ### Height flux update
 
-$$
-h_{i,j}^{n+1} = h_{i,j}^{n}
-- \frac{\Delta t}{\Delta x}\bigl(F_{i+1/2,j} - F_{i-1/2,j}\bigr)
-- \frac{\Delta t}{\Delta y}\bigl(G_{i,j+1/2} - G_{i,j-1/2}\bigr),\quad
-F = hu,\; G = hv
-$$
+$$h_{i,j}^{n+1} = h_{i,j}^{n} - \frac{\Delta t}{\Delta x}\bigl(F_{i+1/2,j} - F_{i-1/2,j}\bigr) - \frac{\Delta t}{\Delta y}\bigl(G_{i,j+1/2} - G_{i,j-1/2}\bigr),\quad F = hu,\; G = hv$$
 
 Upwind flux:
 
@@ -86,8 +81,6 @@ $$
 ---
 
 ## Project roadmap
-
-Milestones follow roughly logical dependency. **Status** tracks progress; update the icon as you go.
 
 | Status | Milestone | Goal |
 | :--- | :--- | :--- |

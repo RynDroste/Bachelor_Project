@@ -23,13 +23,17 @@ constexpr int   kNy = 128;
 constexpr float kDx = 1.0f;
 constexpr float kDt = 1.0f / 120.0f;
 constexpr int   kSubsteps = 2;
-// false: SWE only; true: coupled (decompose, SWE, Airy, transport, recombine).
 constexpr bool  kCoupledStep = true;
-// Split view: coupled left, SWE right (~2x cost); left pane only uses kCoupledStep.
 constexpr bool  kSplitCompareSwe = true;
 constexpr float kGradPenaltyD = 0.25f;
-constexpr bool  kVsync          = true; // vsync caps FPS near monitor refresh
-constexpr int   kWaveDiffuseIters = 8;  // wave diffusion iters per substep (default in header: 128)
+constexpr bool  kVsync          = true; 
+constexpr int   kWaveDiffuseIters = 8;  // wave diffusion iters per substep
+// Camera: larger radius / FOV shows more of the domain; split view halves viewport width per pane.
+constexpr float kCamOrbitRadius = 108.f;
+constexpr float kCamOrbitAngle  = 0.85f;
+constexpr float kCamEyeY        = 44.f;
+constexpr float kCamFovDeg      = 55.f;
+constexpr float kCamTargetY     = 3.5f;
 
 GLuint compileShader(GLenum type, const char* src) {
     GLuint s = glCreateShader(type);
@@ -223,7 +227,7 @@ int main() {
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
 #endif
 
-    GLFWwindow* window = glfwCreateWindow(1280, 720, "Shallow water", nullptr, nullptr);
+    GLFWwindow* window = glfwCreateWindow(2560, 1440, "Shallow water", nullptr, nullptr);
     if (!window) {
         std::fprintf(stderr, "glfwCreateWindow failed\n");
         glfwTerminate();
@@ -346,7 +350,14 @@ int main() {
     glm::vec3 lightDir = glm::normalize(glm::vec3(0.35f, 0.85f, 0.4f));
 
     Boat boat;
-    boat.pos = glm::vec2(-18.f, 0.f);
+    {
+        const float hL  = boat.length * 0.5f;
+        const float hW  = boat.width * 0.5f;
+        const float ext = std::sqrt(hL * hL + hW * hW);
+        const float pad = kDx;
+        // Same inset as updateBoat clamp: x-min edge, z at pool centerline; heading 0 -> +x toward interior.
+        boat.pos = glm::vec2(-halfW + ext + pad, 0.f);
+    }
     boat.heading = 0.f;
     boat.throttle = 0.f;
     std::vector<float> boatVerts;
@@ -402,14 +413,12 @@ int main() {
             std::fflush(stdout);
         }
 
-        const float ang  = 0.85f;
-        const float rad  = 75.f;
-        const float eyeY = 38.f;
-        glm::vec3         eye(rad * std::cos(ang), eyeY, rad * std::sin(ang));
-        glm::mat4         view = glm::lookAt(eye, glm::vec3(0.f, 3.5f, 0.f), glm::vec3(0.f, 1.f, 0.f));
+        glm::vec3 eye(kCamOrbitRadius * std::cos(kCamOrbitAngle), kCamEyeY,
+                      kCamOrbitRadius * std::sin(kCamOrbitAngle));
+        glm::mat4 view = glm::lookAt(eye, glm::vec3(0.f, kCamTargetY, 0.f), glm::vec3(0.f, 1.f, 0.f));
 
         auto drawPane = [&](int vpX, int vpW, const Grid& grid, float aspect) {
-            glm::mat4 proj = glm::perspective(glm::radians(50.f), aspect, 0.1f, 500.f);
+            glm::mat4 proj = glm::perspective(glm::radians(kCamFovDeg), aspect, 0.1f, 500.f);
             glm::mat4 mvp  = proj * view;
 
             uploadGridTextures(grid, texH, texB);

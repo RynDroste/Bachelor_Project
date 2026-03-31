@@ -2,10 +2,6 @@
 
 #include <cmath>
 
-// =============================================================================
-// Grid
-// =============================================================================
-
 Grid::Grid(int nx, int ny, float cell_size, float timestep)
     : NX(nx), NY(ny), dx(cell_size), dt(timestep)
     , h       (nx * ny,        0.f)

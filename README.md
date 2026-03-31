@@ -1,36 +1,114 @@
-# Bachelor_Project
+# Bachelor Project — Shallow Water Simulation and Real-Time Rendering
 
-# Fluid Simulation and Real-Time Rendering of Shallow Water Equations
+## Author: Xuanlin Chen
 
-## Initial Compilation (Windows / PowerShell)
+Real-time simulation and visualization based on the **shallow water equations**.  
+This repository is a **C++ / CMake** project: the numerical solver runs in parallel on **CUDA**, and rendering uses **OpenGL**.
 
-Execute in the repository root directory (modify the path in the example below according to your clone location). Please replace `CMAKE_TOOLCHAIN_FILE` with the path to your local vcpkg; if you don't need vcpkg, you can remove this line.
+---
+
+## Features
+
+- **Height-field, flux-based SWE**  
+  - Explicit time integration for water depth and momentum  
+  - Flux form on a staggered grid to support mass conservation and boundary treatment  
+
+- **Coupled pipeline**  
+  - Stages such as wave decomposition, shallow-water step, **Airy linear waves**, advection, and recombination can be composed in `pipeline`; see `kCoupledStep` in `main.cpp`  
+
+- **Rendering**  
+  - Height-field textures, mesh displacement, and simple shading. 
+
+---
+
+## Build and run
+
+### 1. Clone the repository
+
+```bash
+git clone <your-repo-url>
+cd Bachelor_Project
+```
+
+### 2. Configure and build
 
 ```powershell
 cd C:\Users\AW\Desktop\Bachelor_Project
-Remove-Item -Recurse -Force .\build
+Remove-Item -Recurse -Force .\build -ErrorAction SilentlyContinue
 
 cmake -S .\code -B .\build -G "Visual Studio 18 2026" -A x64 `
-
--DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake
+  -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake
 
 cmake --build .\build --config Release --parallel
-
 ```
 
-The artifacts are usually located in `build\Release\` (e.g., `BachelorProject.exe`, `DamSWE.exe`). CUDA/cuFFT must be installed and compatible with the generator.
+If the default CUDA architectures do not match your GPU, pass e.g.:
 
-```` | Status | Week | Planned Activity | Expected Result |
-| :--- | :--- | :--- | :--- |
-| ✅ | W1 | Setup environment and basic shaders | The screen can render a static plane with simple colors. |
-| ✅ | W2 | Implement SWE base update cycle | The fundamental changes in the height field can be observed. |
-| ✅ | W3 | Staggered grid & advection implementation | Stable fluid motion |
-| ✅ | W4 | CFL condition & fluctuation handling | Numerically stable simulation |
-| ⬜ | W5 | Blinn-Phong shading implementation | Giving the waveform a sense of depth and light and shadow feedback. |
-| ⬜ | W6 | Real-time vertex height displacement | Dynamic water mesh |
-| ⬜ | W7 | Implement Boundary conditions | Constrained fluid behavior |
-| ⬜ | W8 | Environment mapping & Fresnel effect | Enhanced water aesthetics |
-| ⬜ | W9 | Solid-fluid coupling | Interaction with dynamic objects |
-| ⬜ | W10 | Particle system / Foam map | Visual detail enrichment |
-| ⬜ | W11 | Performance optimization | Real-time frame rate stability |
-| ⬜ | W12 | Final documentation | Completed Thesis Report |
+```text
+-DCMAKE_CUDA_ARCHITECTURES=86-real
+```
+
+---
+
+## Equations and discretization
+
+### Governing equations
+
+$$
+\frac{\partial h}{\partial t} + \nabla \cdot (h \mathbf{v}) = 0,\qquad
+\frac{\partial \mathbf{v}}{\partial t} = -g \,\nabla \eta + \mathbf{a}_{\mathrm{ext}}
+$$
+
+### Typical main-loop stages
+
+1. **Velocity advection** — MacCormack, semi-Lagrangian, etc.  
+2. **Height flux update** — finite volume, conservative discretization  
+3. **Gravity term** — $-g\nabla\eta$ correction to velocity  
+4. **Boundary conditions** — solid-wall reflection, normal velocity constraints, etc.  
+5. **Forcing / sources** — injection, volume sources  
+6. **Optional post-processing** — e.g. smoothing  
+
+### Height flux update
+
+$$
+h_{i,j}^{n+1} = h_{i,j}^{n}
+- \frac{\Delta t}{\Delta x}\bigl(F_{i+1/2,j} - F_{i-1/2,j}\bigr)
+- \frac{\Delta t}{\Delta y}\bigl(G_{i,j+1/2} - G_{i,j-1/2}\bigr),\quad
+F = hu,\; G = hv
+$$
+
+Upwind flux:
+
+$$
+F_{i+1/2,j} = \begin{cases} h_{i,j}\,u_{i+1/2,j} & u>0 \\ h_{i+1,j}\,u_{i+1/2,j} & \text{otherwise} \end{cases}
+$$
+
+---
+
+## Project roadmap
+
+Milestones follow roughly logical dependency. **Status** tracks progress; update the icon as you go.
+
+| Status | Milestone | Goal |
+| :--- | :--- | :--- |
+| ✅ | **Build & GL baseline** | Ship a runnable app: build system, window, OpenGL context, shader loading, frame loop, and camera. |
+| ✅ | **GPU shallow-water core** | Run the shallow-water equations on the GPU with mass-conserving fluxes and staggered velocities. |
+| ✅ | **Advection & stability** | Advect the flow and enforce time-step / wave-speed limits so the simulation stays usable. |
+| ✅ | **Coupled wave pipeline** | Combine the SWE step with a dispersive or spectral correction and transport so scales interact coherently. |
+| ✅ | **Height-field rendering** | Visualize the free surface in real time from simulated depth and bed height. |
+| 🔄 | **Water — lighting** | Define sun/key light and how it hits the surface so all water terms share one coherent setup. |
+| 🔄 | **Water — diffuse** | Lambertian or rough diffuse response from the surface normal so the body of water reads in shade and light. |
+| ⬜ | **Water — specular** | Glossy / specular lobes and Fresnel-aware highlights for sun glints and viewing angle. |
+| ⬜ | **Water — normal mapping** | Break up large facets with tiled or procedural normal detail on top of the displaced mesh. |
+| ⬜ | **Water — refraction** | Show what is under the surface with chromatic or single-layer refraction of the scene or bed. |
+| ⬜ | **Water — transparency** | Control opacity by depth, wet fraction, and Fresnel so shallow vs deep reads correctly. |
+| ⬜ | **Optional: Water — caustics** | Light focusing patterns underwater or on the bed from a refractive surface. |
+| ⬜ | **Optional: Water — foam** | Shoreline and breaking cues: whitecaps, foam masks driven by speed, curl, or depth. |
+| ⬜ | **Optional: Water — flow appearance** | Visualize motion: flow maps, procedural shimmer, or velocity-tinted cues tied to the simulation. |
+| ⬜ | **Water — environment reflection** | Skybox or scene reflections on the water with roughness and Fresnel falloff. |
+| 🔄 | **Dynamic object ↔ fluid** | Let a controlled object move through the domain and exchange momentum with the fluid in a simple, stable way. |
+| ⬜ | **Thesis / report** | Finish and submit the written thesis or project report. |
+
+---
+
+

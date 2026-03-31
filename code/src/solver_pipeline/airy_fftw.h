@@ -12,7 +12,7 @@ public:
     AiryEWaveFFTW(AiryEWaveFFTW&&)                 = delete;
     AiryEWaveFFTW& operator=(AiryEWaveFFTW&&)      = delete;
 
-    // h_tilde_sym: tilde depth at time t aligned with q (paper: average of half-steps)
+    // h_tilde_sym: tilde depth at time t aligned with q
     // h_bar: smoothed depth per cell for piecewise omega = sqrt(g k tanh(k h_bar))
     // qx_tilde / qy_tilde: staggered-face fluxes, updated in place
     void step(float dt, float g,

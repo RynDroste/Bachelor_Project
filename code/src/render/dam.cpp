@@ -283,7 +283,7 @@ int main() {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-    GLFWwindow* window = glfwCreateWindow(1280, 720, "Pure SWE Dam Break", nullptr, nullptr);
+    GLFWwindow* window = glfwCreateWindow(2560, 1440, "Pure SWE Dam Break", nullptr, nullptr);
     if (!window) {
         std::fprintf(stderr, "glfwCreateWindow failed\n");
         glfwTerminate();

@@ -18,18 +18,18 @@ namespace {
 constexpr int kNx = 256;
 constexpr int kNy = 64;
 constexpr float kDx = 1.0f;
-// Slightly conservative vs dx=1 and face CFL cap (see shallow_water_solver_gpu.cu faceSpeedCap_d).
+// Slightly conservative vs dx=1 and face CFL cap.
 constexpr float kDt = 1.0f / 120.0f;
 constexpr int kSubsteps = 2;
 constexpr bool kVsync = true;
 constexpr int kWallThicknessCells = 2;
 constexpr int kGapHalfWidthCells = 6;
-// Negative moves wall toward upstream (left), positive toward downstream (right).
+
 constexpr int kWallCenterOffsetCells = -30;
 constexpr int kSecondWallCenterOffsetCells = -4;
 constexpr int kThirdWallCenterOffsetCells = 16;
 constexpr float kWallHeight = 10.f;
-// Vertex: cell counts as wet if h > this. Lower = thin front visible (matches fragment fade).
+
 constexpr float kWetDepthEps = 1e-2f;
 constexpr bool kUseCenterGap = true;
 constexpr float kG = 9.81f;
@@ -38,7 +38,7 @@ constexpr int kGapCount = 3;        // first wall
 constexpr int kSecondGapCount = 1;  // second wall: one centered opening
 constexpr int kThirdGapCount = 0;   // third wall: fully closed
 constexpr int kGapSpacingCells = 18;
-// Second wall breach larger than the first (ellipse half-axes in cell units).
+
 constexpr float kSecondGapRoundnessXCells = 2.0f;
 constexpr float kSecondGapHalfWidthCells = 11.f;
 constexpr glm::vec3 kFixedCamPos(44.03f, 61.59f, -2.16f);
@@ -235,17 +235,13 @@ void buildDamWallMesh(std::vector<float>& out, int nx, int ny, float dx, float h
 void setupDamInitialState(Grid& g) {
     const int wallCenter = g.NX / 2 + kWallCenterOffsetCells;
     const int wallI0 = wallCenter - kWallThicknessCells / 2;
-    const float hLeft = 4.f;
+    const float hLeft = 5.f;
     const float hRight = 5e-3f;
-    const float transitionCells = 3.0f;
-    const float x0 = static_cast<float>(wallI0);
 
     for (int j = 0; j < g.NY; ++j) {
         for (int i = 0; i < g.NX; ++i) {
             g.B(i, j) = 0.0f;
-            const float x = static_cast<float>(i) - x0;
-            const float blend = 0.5f * (1.0f + std::tanh(x / transitionCells));
-            g.H(i, j) = hLeft * (1.0f - blend) + hRight * blend;
+            g.H(i, j) = (i < wallI0) ? hLeft : hRight;
 
             if (isWallSolidCell(i, j, g.NX, g.NY)) {
                 g.B(i, j) = kWallHeight;

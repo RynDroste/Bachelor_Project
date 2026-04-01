@@ -25,10 +25,9 @@ constexpr float kDt = 1.0f / 120.0f;
 constexpr int   kSubsteps = 2;
 constexpr bool  kCoupledStep = true;
 constexpr bool  kSplitCompareSwe = true;
-constexpr float kGradPenaltyD = 0.01f;
+constexpr float kGradPenaltyD = 0.25f;
 constexpr bool  kVsync          = true; 
-constexpr int   kWaveDiffuseIters = 8;  // wave diffusion iters per substep
-// Camera: larger radius / FOV shows more of the domain; split view halves viewport width per pane.
+constexpr int   kWaveDiffuseIters = 8; 
 constexpr float kCamOrbitRadius = 108.f;
 constexpr float kCamOrbitAngle  = 0.85f;
 constexpr float kCamEyeY        = 44.f;

@@ -56,5 +56,6 @@
         "span": "cpp",
         "stack": "cpp",
         "numbers": "cpp"
-    }
+    },
+    "cmake.sourceDirectory": "C:/Users/AW/Desktop/Bachelor_Project/code"
 }

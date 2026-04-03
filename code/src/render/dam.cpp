@@ -4,6 +4,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
+#include "render/glfw_gl_window.h"
 #include "render/shader_file.h"
 #include "solver_pipeline/shallow_water_solver.h"
 
@@ -275,11 +276,7 @@ int main() {
         std::fprintf(stderr, "glfwInit failed\n");
         return 1;
     }
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
-    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-
-    GLFWwindow* window = glfwCreateWindow(2560, 1440, "Pure SWE Dam Break", nullptr, nullptr);
+    GLFWwindow* window = glfwCreateWindowWithGlFallback(2560, 1440, "Pure SWE Dam Break");
     if (!window) {
         std::fprintf(stderr, "glfwCreateWindow failed\n");
         glfwTerminate();
@@ -293,6 +290,9 @@ int main() {
         glfwDestroyWindow(window);
         glfwTerminate();
         return 1;
+    }
+    if (const GLubyte* ver = glGetString(GL_VERSION)) {
+        std::fprintf(stderr, "OpenGL %s\n", ver);
     }
 
     FrameCtx frame;

@@ -113,6 +113,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
 
 add_executable(DamSWE
     "${CMAKE_CURRENT_SOURCE_DIR}/src/render/dam.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/render/glfw_gl_window.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/render/shader_file.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/solver_pipeline/shallow_water_solver.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/solver_pipeline/shallow_water_solver_gpu.cu"

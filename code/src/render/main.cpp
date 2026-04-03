@@ -7,7 +7,6 @@
 #include "solver_pipeline/airy_fftw.h"
 #include "solver_pipeline/pipeline.h"
 #include "render/boat.h"
-#include "render/glfw_gl_window.h"
 #include "render/shader_file.h"
 #include "solver_pipeline/shallow_water_solver.h"
 #include "solver_pipeline/wavedecomposer.h"
@@ -19,8 +18,8 @@
 
 namespace {
 
-constexpr int   kNx = 128;
-constexpr int   kNy = 128;
+constexpr int   kNx = 256;
+constexpr int   kNy = 256;
 constexpr float kDx = 1.0f;
 constexpr float kDt = 1.0f / 120.0f;
 constexpr int   kSubsteps = 2;
@@ -29,11 +28,12 @@ constexpr bool  kSplitCompareSwe = true;
 constexpr float kGradPenaltyD = 0.25f;
 constexpr bool  kVsync          = false; 
 constexpr int   kWaveDiffuseIters = 8; 
-constexpr float kCamOrbitRadius = 108.f;
-constexpr float kCamOrbitAngle  = 0.85f;
-constexpr float kCamEyeY        = 44.f;
 constexpr float kCamFovDeg      = 55.f;
 constexpr float kCamTargetY     = 3.5f;
+// Fixed camera: world-space eye and look-at target (edit these to frame the pool).
+// Default matches previous orbit: radius 108, yaw 0.85 rad, height 44, target y = kCamTargetY.
+constexpr glm::vec3 kFixedCamEye(70.956f, 44.f, 81.118f);
+constexpr glm::vec3 kFixedCamTarget(0.f, kCamTargetY, 0.f);
 
 GLuint compileShader(GLenum type, const char* src) {
     GLuint s = glCreateShader(type);
@@ -220,7 +220,14 @@ int main() {
         std::fprintf(stderr, "glfwInit failed\n");
         return 1;
     }
-    GLFWwindow* window = glfwCreateWindowWithGlFallback(2560, 1440, "Shallow water");
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+#ifdef __APPLE__
+    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+#endif
+
+    GLFWwindow* window = glfwCreateWindow(2560, 1440, "Shallow water", nullptr, nullptr);
     if (!window) {
         std::fprintf(stderr, "glfwCreateWindow failed\n");
         glfwTerminate();
@@ -234,9 +241,6 @@ int main() {
         glfwDestroyWindow(window);
         glfwTerminate();
         return 1;
-    }
-    if (const GLubyte* ver = glGetString(GL_VERSION)) {
-        std::fprintf(stderr, "OpenGL %s\n", ver);
     }
 
     FrameCtx frame;
@@ -409,9 +413,8 @@ int main() {
             std::fflush(stdout);
         }
 
-        glm::vec3 eye(kCamOrbitRadius * std::cos(kCamOrbitAngle), kCamEyeY,
-                      kCamOrbitRadius * std::sin(kCamOrbitAngle));
-        glm::mat4 view = glm::lookAt(eye, glm::vec3(0.f, kCamTargetY, 0.f), glm::vec3(0.f, 1.f, 0.f));
+        glm::mat4 view =
+            glm::lookAt(kFixedCamEye, kFixedCamTarget, glm::vec3(0.f, 1.f, 0.f));
 
         auto drawPane = [&](int vpX, int vpW, const Grid& grid, float aspect) {
             glm::mat4 proj = glm::perspective(glm::radians(kCamFovDeg), aspect, 0.1f, 500.f);

@@ -21,16 +21,9 @@ This repository is a **C++ / CMake** project: the numerical solver runs in paral
 
 ---
 
-## Build and run
+## Build
 
-### 1. Clone the repository
-
-```bash
-git clone <your-repo-url>
-cd Bachelor_Project
-```
-
-### 2. Configure and build
+### 1. Configure and build
 
 ```powershell
 cd C:\Users\AW\Desktop\Bachelor_Project
@@ -40,12 +33,6 @@ cmake -S .\code -B .\build -G "Visual Studio 18 2026" -A x64 `
   -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake
 
 cmake --build .\build --config Release --parallel
-```
-
-If the default CUDA architectures do not match your GPU, pass e.g.:
-
-```text
--DCMAKE_CUDA_ARCHITECTURES=86-real
 ```
 
 ---
@@ -99,7 +86,6 @@ $$
 | ⬜ | **Optional: Water — foam** | Shoreline and breaking cues: whitecaps, foam masks driven by speed, curl, or depth. |
 | ⬜ | **Optional: Water — flow appearance** | Visualize motion: flow maps, procedural shimmer, or velocity-tinted cues tied to the simulation. |
 | ⬜ | **Water — environment reflection** | Skybox or scene reflections on the water with roughness and Fresnel falloff. |
-| 🔄 | **Dynamic object ↔ fluid** | Let a controlled object move through the domain and exchange momentum with the fluid in a simple, stable way. |
 | ⬜ | **Thesis / report** | Finish and submit the written thesis or project report. |
 
 ---

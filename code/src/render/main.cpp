@@ -18,8 +18,8 @@
 
 namespace {
 
-constexpr int   kNx = 256;
-constexpr int   kNy = 256;
+constexpr int   kNx = 128;
+constexpr int   kNy = 128;
 constexpr float kDx = 1.0f;
 constexpr float kDt = 1.0f / 120.0f;
 constexpr int   kSubsteps = 2;
@@ -264,6 +264,7 @@ int main() {
     }
     GLint locMVP = glGetUniformLocation(prog, "uMVP");
     GLint locLight = glGetUniformLocation(prog, "uLightDir");
+    GLint locCamPos = glGetUniformLocation(prog, "uCameraPos");
     GLint locWaterAlpha = glGetUniformLocation(prog, "uAlpha");
     GLint locDx = glGetUniformLocation(prog, "uDx");
     GLint locHalfW = glGetUniformLocation(prog, "uHalfW");
@@ -447,6 +448,8 @@ int main() {
             glUseProgram(prog);
             glUniformMatrix4fv(locMVP, 1, GL_FALSE, glm::value_ptr(mvp));
             glUniform3fv(locLight, 1, glm::value_ptr(lightDir));
+            if (locCamPos >= 0)
+                glUniform3fv(locCamPos, 1, glm::value_ptr(kFixedCamEye));
             if (locWaterAlpha >= 0)
                 glUniform1f(locWaterAlpha, 0.84f);
             if (locDx >= 0)

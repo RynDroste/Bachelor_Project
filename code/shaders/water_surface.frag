@@ -5,6 +5,8 @@ uniform vec3 uLightDir;
 uniform vec3 uCameraPos;
 uniform samplerCube uEnvMap;
 uniform float uEnvMaxMip;
+uniform sampler2D uReflectionTex;
+uniform mat4 uReflViewProj;
 uniform float uAlpha;
 out vec4 FragColor;
 
@@ -16,6 +18,8 @@ const vec3 kF0 = vec3(0.02);
 // IBL: cubemap mips approximate prefilter; no BRDF LUT (split-sum) — strengths are artistic knobs.
 const float kIBLDiffuseMul = 0.5;
 const float kIBLSpecMul    = 0.55;
+// Planar reflection vs cubemap spec: 1 = full replace of IBL spec where valid.
+const float kPlanarReflMix = 0.82;
 
 float distributionGGX(vec3 N, vec3 H, float roughness) {
     float a  = roughness * roughness;
@@ -111,6 +115,14 @@ void main() {
     vec3 iblDiffuse = irradiance * base * (vec3(1.0) - Fnv) * kIBLDiffuseMul;
     vec3 iblSpec = prefilteredSpec * Fnv * kIBLSpecMul;
 
-    vec3 rgb = diffuse + spec + iblDiffuse + iblSpec;
+    vec4 clipR = uReflViewProj * vec4(vWorldPos, 1.0);
+    float rw = clipR.w;
+    vec2 uvR = clipR.xy / rw * 0.5 + 0.5;
+    float reflOk =
+        step(1e-4, rw) * step(0.001, uvR.x) * step(uvR.x, 0.999) * step(0.001, uvR.y) * step(uvR.y, 0.999);
+    vec3 planar = texture(uReflectionTex, uvR).rgb;
+    vec3 iblSpecFinal = mix(iblSpec, planar * kIBLSpecMul, reflOk * kPlanarReflMix);
+
+    vec3 rgb = diffuse + spec + iblDiffuse + iblSpecFinal;
     FragColor = vec4(rgb, uAlpha);
 }

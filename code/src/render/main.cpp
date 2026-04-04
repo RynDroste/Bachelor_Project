@@ -7,6 +7,7 @@
 #include "solver_pipeline/airy_fftw.h"
 #include "solver_pipeline/pipeline.h"
 #include "render/boat.h"
+#include "render/env_cubemap.h"
 #include "render/shader_file.h"
 #include "solver_pipeline/shallow_water_solver.h"
 #include "solver_pipeline/wavedecomposer.h"
@@ -34,6 +35,16 @@ constexpr float kCamTargetY     = 3.5f;
 // Default matches previous orbit: radius 108, yaw 0.85 rad, height 44, target y = kCamTargetY.
 constexpr glm::vec3 kFixedCamEye(70.956f, 44.f, 81.118f);
 constexpr glm::vec3 kFixedCamTarget(0.f, kCamTargetY, 0.f);
+
+// Unit cube (36 verts); rendered from the inside as the skybox.
+static const float kSkyboxVerts[] = {
+    -1.f, 1.f,  -1.f, -1.f, -1.f, -1.f, 1.f,  -1.f, -1.f, 1.f,  -1.f, -1.f, 1.f,  1.f,  -1.f, -1.f, 1.f,  -1.f,
+    -1.f, -1.f, 1.f,  -1.f, -1.f, -1.f, -1.f, 1.f,  -1.f, -1.f, 1.f,  -1.f, -1.f, 1.f,  1.f,  -1.f, -1.f, 1.f,
+    1.f,  -1.f, -1.f, 1.f,  -1.f, 1.f,  1.f, 1.f,  1.f,  1.f, 1.f,  1.f,  1.f, 1.f,  -1.f, 1.f,  -1.f, -1.f,
+    -1.f, -1.f, -1.f, -1.f, -1.f, 1.f,  1.f, -1.f, -1.f, 1.f,  -1.f, -1.f, -1.f, -1.f, 1.f,  1.f,  -1.f, 1.f,
+    -1.f, 1.f,  -1.f, 1.f,  1.f,  -1.f, 1.f,  1.f,  1.f,  1.f, 1.f,  1.f,  -1.f, 1.f,  1.f,  -1.f, 1.f,  -1.f,
+    -1.f, -1.f, -1.f, -1.f, -1.f, 1.f,  1.f, -1.f, 1.f,  1.f, -1.f, 1.f,  1.f, -1.f, -1.f, -1.f, -1.f, -1.f,
+};
 
 GLuint compileShader(GLenum type, const char* src) {
     GLuint s = glCreateShader(type);
@@ -271,6 +282,8 @@ int main() {
     GLint locHalfD = glGetUniformLocation(prog, "uHalfD");
     GLint locTexH = glGetUniformLocation(prog, "uH");
     GLint locTexB = glGetUniformLocation(prog, "uB");
+    GLint locEnvMap = glGetUniformLocation(prog, "uEnvMap");
+    GLint locEnvMaxMip = glGetUniformLocation(prog, "uEnvMaxMip");
 
     Grid                      g(kNx, kNy, kDx, kDt);
     std::unique_ptr<Grid>     gCompareSwe;
@@ -344,11 +357,35 @@ int main() {
     glEnableVertexAttribArray(1);
     glBindVertexArray(0);
 
+    std::string skyVs = loadTextFile(shaderPath("skybox.vert"));
+    std::string skyFs = loadTextFile(shaderPath("skybox.frag"));
+    GLuint      skyProg = 0;
+    if (!skyVs.empty() && !skyFs.empty())
+        skyProg = makeProgram(skyVs.c_str(), skyFs.c_str());
+    if (!skyProg)
+        std::fprintf(stderr, "warning: skybox shaders missing or failed to compile (tried %s)\n",
+                     shaderPath("skybox.vert").c_str());
+    GLint locSkyProj = skyProg ? glGetUniformLocation(skyProg, "uProj") : -1;
+    GLint locSkyView = skyProg ? glGetUniformLocation(skyProg, "uViewSky") : -1;
+    GLint locSkyMap  = skyProg ? glGetUniformLocation(skyProg, "uSkyMap") : -1;
+    GLuint skyVao = 0, skyVbo = 0;
+    glGenVertexArrays(1, &skyVao);
+    glGenBuffers(1, &skyVbo);
+    glBindVertexArray(skyVao);
+    glBindBuffer(GL_ARRAY_BUFFER, skyVbo);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(kSkyboxVerts), kSkyboxVerts, GL_STATIC_DRAW);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), reinterpret_cast<void*>(0));
+    glEnableVertexAttribArray(0);
+    glBindVertexArray(0);
+
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LESS);
     glClearColor(0.14f, 0.18f, 0.26f, 1.f);
 
     glm::vec3 lightDir = glm::normalize(glm::vec3(0.35f, 0.85f, 0.4f));
+
+    float     envMaxMipF = 0.f;
+    const GLuint envCubemap = makeProceduralEnvCubemap(256, lightDir, &envMaxMipF);
 
     Boat boat;
     {
@@ -424,6 +461,27 @@ int main() {
             uploadGridTextures(grid, texH, texB);
 
             glViewport(vpX, 0, vpW, frame.fbH);
+
+            if (skyProg) {
+                glDepthMask(GL_FALSE);
+                glDepthFunc(GL_LEQUAL);
+                glUseProgram(skyProg);
+                const glm::mat4 skyView = glm::mat4(glm::mat3(view));
+                if (locSkyProj >= 0)
+                    glUniformMatrix4fv(locSkyProj, 1, GL_FALSE, glm::value_ptr(proj));
+                if (locSkyView >= 0)
+                    glUniformMatrix4fv(locSkyView, 1, GL_FALSE, glm::value_ptr(skyView));
+                glActiveTexture(GL_TEXTURE0);
+                glBindTexture(GL_TEXTURE_CUBE_MAP, envCubemap);
+                if (locSkyMap >= 0)
+                    glUniform1i(locSkyMap, 0);
+                glBindVertexArray(skyVao);
+                glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(sizeof(kSkyboxVerts) / (sizeof(float) * 3u)));
+                glBindVertexArray(0);
+                glDepthFunc(GL_LESS);
+                glDepthMask(GL_TRUE);
+            }
+
             if (boatProg) {
                 fillBoatSolidMesh(boatVerts, boat);
 
@@ -466,6 +524,12 @@ int main() {
             glBindTexture(GL_TEXTURE_2D, texB);
             if (locTexB >= 0)
                 glUniform1i(locTexB, 1);
+            glActiveTexture(GL_TEXTURE2);
+            glBindTexture(GL_TEXTURE_CUBE_MAP, envCubemap);
+            if (locEnvMap >= 0)
+                glUniform1i(locEnvMap, 2);
+            if (locEnvMaxMip >= 0)
+                glUniform1f(locEnvMaxMip, envMaxMipF);
             glActiveTexture(GL_TEXTURE0);
 
             glBindVertexArray(vao);
@@ -523,8 +587,13 @@ int main() {
     glDeleteProgram(prog);
     if (boatProg)
         glDeleteProgram(boatProg);
+    if (skyProg)
+        glDeleteProgram(skyProg);
+    glDeleteBuffers(1, &skyVbo);
+    glDeleteVertexArrays(1, &skyVao);
     glDeleteTextures(1, &texH);
     glDeleteTextures(1, &texB);
+    glDeleteTextures(1, &envCubemap);
     glDeleteBuffers(1, &boatVbo);
     glDeleteVertexArrays(1, &boatVao);
     glDeleteBuffers(1, &vbo);

@@ -8,6 +8,11 @@ uniform float uEnvMaxMip;
 uniform sampler2D uReflectionTex;
 uniform mat4 uReflViewProj;
 uniform float uAlpha;
+uniform float uDx;
+uniform float uHalfW;
+uniform float uHalfD;
+uniform sampler2D uH;
+uniform float uWetDepthEps;
 out vec4 FragColor;
 
 const float PI = 3.14159265;
@@ -77,6 +82,18 @@ vec3 hammonDiffuse(vec3 N, vec3 L, vec3 V, vec3 albedo, float roughness) {
 }
 
 void main() {
+    // Dry cells pull vertices to y=uEtaRef (vert shader), which leaves a horizontal sheet; discard
+    // fragments where the sim has no water so land is not tinted by a fake sheet below hills.
+    ivec2 sz = textureSize(uH, 0);
+    vec2 uv = vec2(
+        (vWorldPos.x + uHalfW) / (float(sz.x) * uDx),
+        (vWorldPos.z + uHalfD) / (float(sz.y) * uDx));
+    if (any(lessThan(uv, vec2(0.0))) || any(greaterThanEqual(uv, vec2(1.0))))
+        discard;
+    float hCell = texture(uH, uv).r;
+    if (max(hCell, 0.0) < uWetDepthEps)
+        discard;
+
     vec3 nx = dFdx(vWorldPos);
     vec3 ny = dFdy(vWorldPos);
     vec3 N = normalize(cross(nx, ny));

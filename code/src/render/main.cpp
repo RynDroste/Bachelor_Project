@@ -13,14 +13,20 @@
 #include "solver_pipeline/wavedecomposer.h"
 #include <cmath>
 #include <cstdio>
+#include <cstring>
+#include <fstream>
 #include <memory>
 #include <string>
 #include <vector>
 
+#ifndef BP_TOOLS_ROOT
+#define BP_TOOLS_ROOT "."
+#endif
+
 namespace {
 
-constexpr int   kNx = 128;
-constexpr int   kNy = 128;
+constexpr int   kNx = 256;
+constexpr int   kNy = 256;
 constexpr float kDx = 1.0f;
 constexpr float kDt = 1.0f / 120.0f;
 constexpr int   kSubsteps = 2;
@@ -37,6 +43,15 @@ constexpr glm::vec3 kFixedCamEye(70.956f, 44.f, 81.118f);
 constexpr glm::vec3 kFixedCamTarget(0.f, kCamTargetY, 0.f);
 // Horizontal reflection plane y = const (flat-pool approximation; matches B=0, h≈h0).
 constexpr float kReflectPlaneY = 4.0f;
+// Initial free-surface elevation η = B + h. Depth follows terrain: h = max(0, η_ref - B).
+// When B ≡ 0 this matches the old uniform h0 = kReflectPlaneY.
+constexpr float kEtaRef = kReflectPlaneY;
+// Match shallow-water dry threshold (~1e-3 in solver); water frag discards below this.
+constexpr float kWetDepthEps = 1e-3f;
+// Shallow-water vertex blend: η_vertex = mix(kEtaRef, η_sampled, saturate(h_avg / range)).
+constexpr float kShoreBlendRange = 2.0f;
+// Opaque seabed / land mesh under the water (uses g.terrain / texB).
+constexpr bool kRenderTerrainMesh = true;
 
 // Unit cube (36 verts); rendered from the inside as the skybox.
 static const float kSkyboxVerts[] = {
@@ -88,6 +103,15 @@ GLuint makeProgram(const char* vs, const char* fs) {
         return 0;
     }
     return p;
+}
+
+bool loadTerrainHeightmapRaw(const char* path, Grid& g) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in)
+        return false;
+    const size_t n = static_cast<size_t>(g.NX) * static_cast<size_t>(g.NY);
+    in.read(reinterpret_cast<char*>(g.terrain.data()), static_cast<std::streamsize>(n * sizeof(float)));
+    return static_cast<size_t>(in.gcount()) == n * sizeof(float);
 }
 
 void buildWaterCornerIJ(int nx, int ny, std::vector<float>& out) {
@@ -318,6 +342,20 @@ int main() {
         glfwTerminate();
         return 1;
     }
+    std::string terrainVs = loadTextFile(shaderPath("terrain.vert"));
+    std::string terrainFs = loadTextFile(shaderPath("terrain.frag"));
+    GLuint      terrainProg =
+        (!terrainVs.empty() && !terrainFs.empty()) ? makeProgram(terrainVs.c_str(), terrainFs.c_str()) : 0u;
+    if (kRenderTerrainMesh && !terrainProg)
+        std::fprintf(stderr, "warning: terrain shaders missing (tried %s)\n", shaderPath("terrain.vert").c_str());
+    GLint locTerrainMVP    = terrainProg ? glGetUniformLocation(terrainProg, "uMVP") : -1;
+    GLint locTerrainLight  = terrainProg ? glGetUniformLocation(terrainProg, "uLightDir") : -1;
+    GLint locTerrainCam    = terrainProg ? glGetUniformLocation(terrainProg, "uCamPos") : -1;
+    GLint locTerrainDx     = terrainProg ? glGetUniformLocation(terrainProg, "uDx") : -1;
+    GLint locTerrainHalfW  = terrainProg ? glGetUniformLocation(terrainProg, "uHalfW") : -1;
+    GLint locTerrainHalfD  = terrainProg ? glGetUniformLocation(terrainProg, "uHalfD") : -1;
+    GLint locTerrainTexB   = terrainProg ? glGetUniformLocation(terrainProg, "uB") : -1;
+
     GLint locMVP = glGetUniformLocation(prog, "uMVP");
     GLint locLight = glGetUniformLocation(prog, "uLightDir");
     GLint locCamPos = glGetUniformLocation(prog, "uCameraPos");
@@ -331,11 +369,26 @@ int main() {
     GLint locEnvMaxMip = glGetUniformLocation(prog, "uEnvMaxMip");
     GLint locReflTex = glGetUniformLocation(prog, "uReflectionTex");
     GLint locReflVP  = glGetUniformLocation(prog, "uReflViewProj");
+    GLint locWetEps  = glGetUniformLocation(prog, "uWetDepthEps");
+    GLint locEtaRefU = glGetUniformLocation(prog, "uEtaRef");
+    GLint locShoreBlendRange = glGetUniformLocation(prog, "uShoreBlendRange");
 
     Grid                      g(kNx, kNy, kDx, kDt);
     std::unique_ptr<Grid>     gCompareSwe;
     if (kSplitCompareSwe)
         gCompareSwe = std::make_unique<Grid>(kNx, kNy, kDx, kDt);
+
+    const std::string terrainRawPath = std::string(BP_TOOLS_ROOT) + "/terrain_coastal.raw";
+    if (loadTerrainHeightmapRaw(terrainRawPath.c_str(), g)) {
+        std::printf("loaded terrain heightmap: %s\n", terrainRawPath.c_str());
+        if (gCompareSwe)
+            std::memcpy(gCompareSwe->terrain.data(), g.terrain.data(),
+                        static_cast<size_t>(g.NX * g.NY) * sizeof(float));
+    } else {
+        std::fprintf(stderr, "terrain: file not found or wrong size (%s), using B=0\n",
+                     terrainRawPath.c_str());
+    }
+
     WaveDecomposition waveDec;
     // Airy: symmetrized h_tilde across substeps.
     std::vector<float> hTildePrevHalf;
@@ -347,12 +400,13 @@ int main() {
     const float halfW = 0.5f * kNx * kDx;
     const float halfD = 0.5f * kNy * kDx;
 
-    const float h0 = 4.0f;
+    // Set g.B(...) before this loop when loading a heightmap; default B is 0.
     for (int j = 0; j < kNy; ++j) {
         for (int i = 0; i < kNx; ++i) {
-            g.H(i, j) = h0;
+            const float hInit = fmaxf(0.f, kEtaRef - g.B(i, j));
+            g.H(i, j) = hInit;
             if (gCompareSwe)
-                gCompareSwe->H(i, j) = h0;
+                gCompareSwe->H(i, j) = hInit;
         }
     }
 
@@ -606,6 +660,31 @@ int main() {
                 glBindVertexArray(0);
             }
 
+            if (kRenderTerrainMesh && terrainProg) {
+                glDisable(GL_BLEND);
+                glDepthMask(GL_TRUE);
+                glUseProgram(terrainProg);
+                if (locTerrainMVP >= 0)
+                    glUniformMatrix4fv(locTerrainMVP, 1, GL_FALSE, glm::value_ptr(mvp));
+                if (locTerrainLight >= 0)
+                    glUniform3fv(locTerrainLight, 1, glm::value_ptr(lightDir));
+                if (locTerrainCam >= 0)
+                    glUniform3fv(locTerrainCam, 1, glm::value_ptr(kFixedCamEye));
+                if (locTerrainDx >= 0)
+                    glUniform1f(locTerrainDx, kDx);
+                if (locTerrainHalfW >= 0)
+                    glUniform1f(locTerrainHalfW, halfW);
+                if (locTerrainHalfD >= 0)
+                    glUniform1f(locTerrainHalfD, halfD);
+                glActiveTexture(GL_TEXTURE0);
+                glBindTexture(GL_TEXTURE_2D, texB);
+                if (locTerrainTexB >= 0)
+                    glUniform1i(locTerrainTexB, 0);
+                glBindVertexArray(vao);
+                glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(indices.size()), GL_UNSIGNED_INT, nullptr);
+                glBindVertexArray(0);
+            }
+
             glEnable(GL_BLEND);
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
             glDepthMask(GL_FALSE);
@@ -626,6 +705,12 @@ int main() {
                 glUniform1f(locHalfW, halfW);
             if (locHalfD >= 0)
                 glUniform1f(locHalfD, halfD);
+            if (locWetEps >= 0)
+                glUniform1f(locWetEps, kWetDepthEps);
+            if (locEtaRefU >= 0)
+                glUniform1f(locEtaRefU, kEtaRef);
+            if (locShoreBlendRange >= 0)
+                glUniform1f(locShoreBlendRange, kShoreBlendRange);
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D, texH);
             if (locTexH >= 0)
@@ -699,6 +784,8 @@ int main() {
     }
 
     glDeleteProgram(prog);
+    if (terrainProg)
+        glDeleteProgram(terrainProg);
     if (boatProg)
         glDeleteProgram(boatProg);
     if (skyProg)

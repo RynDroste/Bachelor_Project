@@ -1,0 +1,5 @@
+NX=256
+NY=256
+dtype=float32
+order=C row-major j then i: index = i + j*NX
+seed=0

@@ -34,6 +34,7 @@ add_executable(${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/src/solver_pipeline/wave_decompose_gpu.cu"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/solver_pipeline/shallow_water_solver_gpu.cu"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/solver_pipeline/transport_gpu.cu"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/solver_pipeline/pipeline_coupled_gpu.cu"
 )
 
 set_target_properties(${PROJECT_NAME} PROPERTIES CUDA_SEPARABLE_COMPILATION ON)

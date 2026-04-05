@@ -1,6 +1,7 @@
 #version 330 core
 // Corner IJ; H/B from textures. Weighted blend at wet/dry boundaries to avoid steep
 // triangles ("folded" shoreline); dry corners use flat uEtaRef + fragment discard.
+// Optional Gerstner ripples on η (visual only; not in the SWE solve).
 layout (location = 0) in vec2 aCornerIJ;
 uniform mat4 uMVP;
 uniform float uDx;
@@ -12,8 +13,26 @@ uniform float uWetDepthEps;
 uniform float uEtaRef;
 // Shore band: shoreBlend = saturate(hAvg / range); vertex y = mix(flat eta_ref, sampled eta, shoreBlend).
 uniform float uShoreBlendRange;
+uniform float uTime;
+uniform float uGerstnerWeight;
 out vec3 vWorldPos;
 out float vDepth;
+
+const float PI = 3.14159265;
+const float G = 9.81;
+
+void gerstnerAdd(vec2 xz, float t, vec2 D, float wavelength, float amp, float Q,
+                 inout vec3 disp) {
+    float k = 2.0 * PI / max(wavelength, 0.001);
+    float c = sqrt(G / k);
+    float a = k * (dot(D, xz) - c * t);
+    float s = sin(a);
+    float co = cos(a);
+    disp.x += Q * amp * D.x * co;
+    disp.z += Q * amp * D.y * co;
+    disp.y += amp * s;
+}
+
 void main() {
     int vi = int(aCornerIJ.x + 0.0001);
     int vj = int(aCornerIJ.y + 0.0001);
@@ -56,7 +75,27 @@ void main() {
     }
     float wx = float(vi) * uDx - uHalfW;
     float wz = float(vj) * uDx - uHalfD;
-    vWorldPos = vec3(wx, y, wz);
+
+    float shoreBlend = 0.0;
+    if (sumW > 1e-6) {
+        shoreBlend = uShoreBlendRange > 1e-6
+            ? clamp(hAvg / uShoreBlendRange, 0.0, 1.0)
+            : 1.0;
+    }
+    float wetGerst = smoothstep(uWetDepthEps * 0.25, uWetDepthEps * 2.5, max(hAvg, 0.0));
+    float gMask = wetGerst * shoreBlend * clamp(uGerstnerWeight, 0.0, 1.0);
+
+    vec3 gDisp = vec3(0.0);
+    if (gMask > 1e-5) {
+        vec2 xz = vec2(wx, wz);
+        gerstnerAdd(xz, uTime, normalize(vec2(1.0, 0.22)), 42.0, 0.11, 0.55, gDisp);
+        gerstnerAdd(xz, uTime, normalize(vec2(-0.35, 1.0)), 28.0, 0.065, 0.5, gDisp);
+        gerstnerAdd(xz, uTime * 1.07, normalize(vec2(0.85, -0.52)), 16.0, 0.035, 0.42, gDisp);
+        gerstnerAdd(xz, uTime * 0.93, normalize(vec2(0.2, 1.0)), 9.0, 0.018, 0.38, gDisp);
+        gDisp *= gMask;
+    }
+
+    vWorldPos = vec3(wx + gDisp.x, y + gDisp.y, wz + gDisp.z);
     vDepth = hAvg;
     gl_Position = uMVP * vec4(vWorldPos, 1.0);
 }

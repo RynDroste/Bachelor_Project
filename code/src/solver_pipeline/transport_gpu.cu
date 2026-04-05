@@ -6,7 +6,16 @@
 #include <cstdio>
 #include <cuda_runtime.h>
 
-namespace {
+#define BP_JT_CUDA_OK(x)                                                                                               \
+    do {                                                                                                               \
+        cudaError_t _e = (x);                                                                                          \
+        if (_e != cudaSuccess) {                                                                                       \
+            std::fprintf(stderr, "%s:%d CUDA error: %s\n", __FILE__, __LINE__, cudaGetErrorString(_e));              \
+            std::abort();                                                                                              \
+        }                                                                                                              \
+    } while (0)
+
+namespace bp_jt_detail {
 
 #define JT_CUDA_CHECK(x)                                                                                               \
     do {                                                                                                               \
@@ -364,35 +373,11 @@ struct JtGpuScratch {
 
 JtGpuScratch g_jt;
 
-} // namespace
-
-void transportSurfaceGpu(WaveDecomposition& dec, const Grid& gBar0, const Grid& gBar1, float halfW, float halfD,
-                           float dt, float gamma) {
-    JT_CUDA_CHECK(cudaSetDevice(0));
-    const int nx = gBar0.NX;
-    const int ny = gBar0.NY;
-    if (nx != gBar1.NX || ny != gBar1.NY || gBar0.dx != gBar1.dx) {
-        std::fprintf(stderr, "transportSurfaceGpu: grid size mismatch\n");
-        std::abort();
-    }
-    const float dx = gBar0.dx;
-
-    g_jt.ensure(nx, ny);
-    const size_t ncell = static_cast<size_t>(nx) * static_cast<size_t>(ny);
-    const size_t nqx   = static_cast<size_t>(nx + 1) * static_cast<size_t>(ny);
-    const size_t nqy   = static_cast<size_t>(nx) * static_cast<size_t>(ny + 1);
-
-    JT_CUDA_CHECK(cudaMemcpy(g_jt.d_h0, gBar0.h.data(), ncell * sizeof(float), cudaMemcpyHostToDevice));
-    JT_CUDA_CHECK(cudaMemcpy(g_jt.d_qx0, gBar0.qx.data(), nqx * sizeof(float), cudaMemcpyHostToDevice));
-    JT_CUDA_CHECK(cudaMemcpy(g_jt.d_qy0, gBar0.qy.data(), nqy * sizeof(float), cudaMemcpyHostToDevice));
-    JT_CUDA_CHECK(cudaMemcpy(g_jt.d_h1, gBar1.h.data(), ncell * sizeof(float), cudaMemcpyHostToDevice));
-    JT_CUDA_CHECK(cudaMemcpy(g_jt.d_qx1, gBar1.qx.data(), nqx * sizeof(float), cudaMemcpyHostToDevice));
-    JT_CUDA_CHECK(cudaMemcpy(g_jt.d_qy1, gBar1.qy.data(), nqy * sizeof(float), cudaMemcpyHostToDevice));
-    JT_CUDA_CHECK(cudaMemcpy(g_jt.d_qx_tilde, dec.qx_tilde.data(), nqx * sizeof(float), cudaMemcpyHostToDevice));
-    JT_CUDA_CHECK(cudaMemcpy(g_jt.d_qy_tilde, dec.qy_tilde.data(), nqy * sizeof(float), cudaMemcpyHostToDevice));
-    JT_CUDA_CHECK(cudaMemcpy(g_jt.d_h_tilde, dec.h_tilde.data(), ncell * sizeof(float), cudaMemcpyHostToDevice));
-
+void runTransportKernels(int nx, int ny, float dx, float halfW, float halfD, float dt, float gamma) {
     constexpr int threads = 256;
+    const size_t  ncell   = static_cast<size_t>(nx) * static_cast<size_t>(ny);
+    const size_t  nqx     = static_cast<size_t>(nx + 1) * static_cast<size_t>(ny);
+    const size_t  nqy     = static_cast<size_t>(nx) * static_cast<size_t>(ny + 1);
     const int     nqxN    = static_cast<int>(nqx);
     const int     nqyN    = static_cast<int>(nqy);
     const int     ncellN  = static_cast<int>(ncell);
@@ -428,10 +413,81 @@ void transportSurfaceGpu(WaveDecomposition& dec, const Grid& gBar0, const Grid& 
     transport_h_advect_k<<<jt_blocks_for(ncellN, threads), threads>>>(
         g_jt.d_h_tilde, g_jt.d_h_saved, g_jt.d_h1, g_jt.d_qx1, g_jt.d_qy1, nx, ny, dx, halfW, halfD, dt);
     JT_POST_KERNEL();
+}
 
-    JT_CUDA_CHECK(cudaDeviceSynchronize());
+} // namespace bp_jt_detail
 
-    JT_CUDA_CHECK(cudaMemcpy(dec.qx_tilde.data(), g_jt.d_qx_tilde, nqx * sizeof(float), cudaMemcpyDeviceToHost));
-    JT_CUDA_CHECK(cudaMemcpy(dec.qy_tilde.data(), g_jt.d_qy_tilde, nqy * sizeof(float), cudaMemcpyDeviceToHost));
-    JT_CUDA_CHECK(cudaMemcpy(dec.h_tilde.data(), g_jt.d_h_tilde, ncell * sizeof(float), cudaMemcpyDeviceToHost));
+void transportSurfaceGpu(WaveDecomposition& dec, const Grid& gBar0, const Grid& gBar1, float halfW, float halfD,
+                           float dt, float gamma) {
+    BP_JT_CUDA_OK(cudaSetDevice(0));
+    const int nx = gBar0.NX;
+    const int ny = gBar0.NY;
+    if (nx != gBar1.NX || ny != gBar1.NY || gBar0.dx != gBar1.dx) {
+        std::fprintf(stderr, "transportSurfaceGpu: grid size mismatch\n");
+        std::abort();
+    }
+    const float dx = gBar0.dx;
+
+    bp_jt_detail::g_jt.ensure(nx, ny);
+    const size_t ncell = static_cast<size_t>(nx) * static_cast<size_t>(ny);
+    const size_t nqx   = static_cast<size_t>(nx + 1) * static_cast<size_t>(ny);
+    const size_t nqy   = static_cast<size_t>(nx) * static_cast<size_t>(ny + 1);
+
+    BP_JT_CUDA_OK(
+        cudaMemcpy(bp_jt_detail::g_jt.d_h0, gBar0.h.data(), ncell * sizeof(float), cudaMemcpyHostToDevice));
+    BP_JT_CUDA_OK(
+        cudaMemcpy(bp_jt_detail::g_jt.d_qx0, gBar0.qx.data(), nqx * sizeof(float), cudaMemcpyHostToDevice));
+    BP_JT_CUDA_OK(
+        cudaMemcpy(bp_jt_detail::g_jt.d_qy0, gBar0.qy.data(), nqy * sizeof(float), cudaMemcpyHostToDevice));
+    BP_JT_CUDA_OK(
+        cudaMemcpy(bp_jt_detail::g_jt.d_h1, gBar1.h.data(), ncell * sizeof(float), cudaMemcpyHostToDevice));
+    BP_JT_CUDA_OK(
+        cudaMemcpy(bp_jt_detail::g_jt.d_qx1, gBar1.qx.data(), nqx * sizeof(float), cudaMemcpyHostToDevice));
+    BP_JT_CUDA_OK(
+        cudaMemcpy(bp_jt_detail::g_jt.d_qy1, gBar1.qy.data(), nqy * sizeof(float), cudaMemcpyHostToDevice));
+    BP_JT_CUDA_OK(
+        cudaMemcpy(bp_jt_detail::g_jt.d_qx_tilde, dec.qx_tilde.data(), nqx * sizeof(float), cudaMemcpyHostToDevice));
+    BP_JT_CUDA_OK(
+        cudaMemcpy(bp_jt_detail::g_jt.d_qy_tilde, dec.qy_tilde.data(), nqy * sizeof(float), cudaMemcpyHostToDevice));
+    BP_JT_CUDA_OK(
+        cudaMemcpy(bp_jt_detail::g_jt.d_h_tilde, dec.h_tilde.data(), ncell * sizeof(float), cudaMemcpyHostToDevice));
+
+    bp_jt_detail::runTransportKernels(nx, ny, dx, halfW, halfD, dt, gamma);
+
+    BP_JT_CUDA_OK(cudaDeviceSynchronize());
+
+    BP_JT_CUDA_OK(cudaMemcpy(dec.qx_tilde.data(), bp_jt_detail::g_jt.d_qx_tilde, nqx * sizeof(float),
+                             cudaMemcpyDeviceToHost));
+    BP_JT_CUDA_OK(cudaMemcpy(dec.qy_tilde.data(), bp_jt_detail::g_jt.d_qy_tilde, nqy * sizeof(float),
+                             cudaMemcpyDeviceToHost));
+    BP_JT_CUDA_OK(cudaMemcpy(dec.h_tilde.data(), bp_jt_detail::g_jt.d_h_tilde, ncell * sizeof(float),
+                             cudaMemcpyDeviceToHost));
+}
+
+void transportSurfaceGpuDevice(float* d_bar0_h, float* d_bar0_qx, float* d_bar0_qy, float* d_bar1_h, float* d_bar1_qx,
+                               float* d_bar1_qy, float* d_h_tilde, float* d_qx_tilde, float* d_qy_tilde, int nx, int ny,
+                               float dx, float halfW, float halfD, float dt, float gamma) {
+    BP_JT_CUDA_OK(cudaSetDevice(0));
+    bp_jt_detail::g_jt.ensure(nx, ny);
+    const size_t ncell = static_cast<size_t>(nx) * static_cast<size_t>(ny);
+    const size_t nqx   = static_cast<size_t>(nx + 1) * static_cast<size_t>(ny);
+    const size_t nqy   = static_cast<size_t>(nx) * static_cast<size_t>(ny + 1);
+
+    BP_JT_CUDA_OK(cudaMemcpy(bp_jt_detail::g_jt.d_h0, d_bar0_h, ncell * sizeof(float), cudaMemcpyDeviceToDevice));
+    BP_JT_CUDA_OK(cudaMemcpy(bp_jt_detail::g_jt.d_qx0, d_bar0_qx, nqx * sizeof(float), cudaMemcpyDeviceToDevice));
+    BP_JT_CUDA_OK(cudaMemcpy(bp_jt_detail::g_jt.d_qy0, d_bar0_qy, nqy * sizeof(float), cudaMemcpyDeviceToDevice));
+    BP_JT_CUDA_OK(cudaMemcpy(bp_jt_detail::g_jt.d_h1, d_bar1_h, ncell * sizeof(float), cudaMemcpyDeviceToDevice));
+    BP_JT_CUDA_OK(cudaMemcpy(bp_jt_detail::g_jt.d_qx1, d_bar1_qx, nqx * sizeof(float), cudaMemcpyDeviceToDevice));
+    BP_JT_CUDA_OK(cudaMemcpy(bp_jt_detail::g_jt.d_qy1, d_bar1_qy, nqy * sizeof(float), cudaMemcpyDeviceToDevice));
+    BP_JT_CUDA_OK(cudaMemcpy(bp_jt_detail::g_jt.d_qx_tilde, d_qx_tilde, nqx * sizeof(float), cudaMemcpyDeviceToDevice));
+    BP_JT_CUDA_OK(cudaMemcpy(bp_jt_detail::g_jt.d_qy_tilde, d_qy_tilde, nqy * sizeof(float), cudaMemcpyDeviceToDevice));
+    BP_JT_CUDA_OK(cudaMemcpy(bp_jt_detail::g_jt.d_h_tilde, d_h_tilde, ncell * sizeof(float), cudaMemcpyDeviceToDevice));
+
+    bp_jt_detail::runTransportKernels(nx, ny, dx, halfW, halfD, dt, gamma);
+
+    BP_JT_CUDA_OK(cudaDeviceSynchronize());
+
+    BP_JT_CUDA_OK(cudaMemcpy(d_qx_tilde, bp_jt_detail::g_jt.d_qx_tilde, nqx * sizeof(float), cudaMemcpyDeviceToDevice));
+    BP_JT_CUDA_OK(cudaMemcpy(d_qy_tilde, bp_jt_detail::g_jt.d_qy_tilde, nqy * sizeof(float), cudaMemcpyDeviceToDevice));
+    BP_JT_CUDA_OK(cudaMemcpy(d_h_tilde, bp_jt_detail::g_jt.d_h_tilde, ncell * sizeof(float), cudaMemcpyDeviceToDevice));
 }

@@ -35,6 +35,18 @@ void sweStepGpu(Grid& g);
 // GPU boundary conditions and wet/dry handling.
 void sweApplyBoundaryConditionsGpu(Grid& g);
 
+// Coupled pipeline (device-resident): ensure SWE d_terrain matches g (cheap if cached).
+void swePrefetchDeviceTerrain(const Grid& g);
+
+// Run one SWE step on device buffers (in/out). Uses staging through internal SWE pool.
+void sweStepGpuInPlaceDevice(float* d_h, float* d_qx, float* d_qy, const Grid& gTerrainRef, int nx, int ny, float dx,
+                             float dt);
+
+void sweApplyBoundaryGpuInPlaceDevice(float* d_h, float* d_qx, float* d_qy, const Grid& gTerrainRef, int nx, int ny,
+                                      float dx, float dt);
+
+void sweDownloadGridFromDevice(Grid& g, const float* d_h, const float* d_qx, const float* d_qy);
+
 // Cell-centered |u|, Fr = |u|/sqrt(g*h) from averaged face fluxes; only cells with h > dryEps.
 struct ShallowWaterDiagnostics {
     float fr_max;           // max Froude number

@@ -21,6 +21,10 @@ public:
               float*       qx_tilde,
               float*       qy_tilde);
 
+    // Same physics as step(); all pointers are device (CUDA). nx/ny/dx must match constructor grid.
+    void stepDevice(float dt, float g, const float* d_h_tilde_sym, const float* d_h_bar, float* d_qx_tilde,
+                    float* d_qy_tilde);
+
     int nx() const { return nx_; }
     int ny() const { return ny_; }
 

@@ -8,6 +8,7 @@ struct Grid;
 struct WaveDecomposition;
 class AiryEWaveFFTW;
 
+// `dec` is unused on the GPU-fused path; `hTildeSym` / `hTildePrevHalf` are not filled (symmetrization is on device).
 void coupledSubstep(Grid& g, float halfW, float halfD,
                       WaveDecomposition& dec,
                       AiryEWaveFFTW& airy,

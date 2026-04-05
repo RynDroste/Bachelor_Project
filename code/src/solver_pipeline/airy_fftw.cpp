@@ -179,3 +179,75 @@ void AiryEWaveFFTW::step(float dt, float g,
     CUDA_CHECK(cudaMemcpy(qx_tilde, im.d_qx_face, nBytesQx, cudaMemcpyDeviceToHost));
     CUDA_CHECK(cudaMemcpy(qy_tilde, im.d_qy_face, nBytesQy, cudaMemcpyDeviceToHost));
 }
+
+void AiryEWaveFFTW::stepDevice(float dt, float g_grav, const float* d_h_tilde_sym, const float* d_h_bar,
+                               float* d_qx_tilde, float* d_qy_tilde) {
+    CUDA_CHECK(cudaSetDevice(0));
+    Impl&       im   = *impl_;
+    const int   nx   = nx_;
+    const int   ny   = ny_;
+    const float dx   = dx_;
+    const float dy   = dx;
+    const int   n    = nx * ny;
+    const float invN = 1.f / static_cast<float>(n);
+    const size_t nBytesF  = static_cast<size_t>(n) * sizeof(float);
+    const size_t nBytesQx = static_cast<size_t>(nx + 1) * static_cast<size_t>(ny) * sizeof(float);
+    const size_t nBytesQy = static_cast<size_t>(nx) * static_cast<size_t>(ny + 1) * sizeof(float);
+
+    float* d_sx0 = im.d_spatial + 0u * static_cast<size_t>(n);
+    float* d_sx1 = im.d_spatial + 1u * static_cast<size_t>(n);
+    float* d_sx2 = im.d_spatial + 2u * static_cast<size_t>(n);
+    float* d_sx3 = im.d_spatial + 3u * static_cast<size_t>(n);
+    float* d_sy0 = im.d_spatial + 4u * static_cast<size_t>(n);
+    float* d_sy1 = im.d_spatial + 5u * static_cast<size_t>(n);
+    float* d_sy2 = im.d_spatial + 6u * static_cast<size_t>(n);
+    float* d_sy3 = im.d_spatial + 7u * static_cast<size_t>(n);
+
+    CUDA_CHECK(cudaMemcpy(im.d_qx_face, d_qx_tilde, nBytesQx, cudaMemcpyDeviceToDevice));
+    CUDA_CHECK(cudaMemcpy(im.d_qy_face, d_qy_tilde, nBytesQy, cudaMemcpyDeviceToDevice));
+    airy_cuda_launch_face_to_cell(im.d_qx_face, im.d_qy_face, im.d_qxc, im.d_qyc, nx, ny, 0);
+    CUDA_POST_KERNEL();
+
+    CUDA_CHECK(cudaMemcpy(im.d_real, d_h_tilde_sym, nBytesF, cudaMemcpyDeviceToDevice));
+    airy_cuda_launch_real_to_complex(im.d_real, im.d_hatH, n, 0);
+    CUDA_POST_KERNEL();
+    CUFFT_CHECK(cufftExecC2C(im.planFwd, im.d_hatH, im.d_hatH, CUFFT_FORWARD));
+
+    airy_cuda_launch_real_to_complex(im.d_qxc, im.d_hatQx, n, 0);
+    CUDA_POST_KERNEL();
+    CUFFT_CHECK(cufftExecC2C(im.planFwd, im.d_hatQx, im.d_hatQx, CUFFT_FORWARD));
+
+    airy_cuda_launch_real_to_complex(im.d_qyc, im.d_hatQy, n, 0);
+    CUDA_POST_KERNEL();
+    CUFFT_CHECK(cufftExecC2C(im.planFwd, im.d_hatQy, im.d_hatQy, CUFFT_FORWARD));
+
+    for (int d = 0; d < 4; ++d) {
+        float* d_sx = im.d_spatial + static_cast<size_t>(d) * static_cast<size_t>(n);
+        float* d_sy = im.d_spatial + (4u + static_cast<size_t>(d)) * static_cast<size_t>(n);
+
+        airy_cuda_launch_spectral_qx(im.d_hatH, im.d_hatQx, im.d_work, nx, ny, dx, dy, dt, g_grav, kDepths[d], 0);
+        CUDA_POST_KERNEL();
+        CUFFT_CHECK(cufftExecC2C(im.planInv, im.d_work, im.d_work, CUFFT_INVERSE));
+        airy_cuda_launch_cpx_to_real_scaled(im.d_work, d_sx, invN, n, 0);
+        CUDA_POST_KERNEL();
+
+        airy_cuda_launch_spectral_qy(im.d_hatH, im.d_hatQy, im.d_work, nx, ny, dx, dy, dt, g_grav, kDepths[d], 0);
+        CUDA_POST_KERNEL();
+        CUFFT_CHECK(cufftExecC2C(im.planInv, im.d_work, im.d_work, CUFFT_INVERSE));
+        airy_cuda_launch_cpx_to_real_scaled(im.d_work, d_sy, invN, n, 0);
+        CUDA_POST_KERNEL();
+    }
+
+    CUDA_CHECK(cudaMemcpy(im.d_h_bar, d_h_bar, nBytesF, cudaMemcpyDeviceToDevice));
+    airy_cuda_launch_blend(d_sx0, d_sx1, d_sx2, d_sx3, d_sy0, d_sy1, d_sy2, d_sy3, im.d_h_bar, im.d_qxc, im.d_qyc,
+                           nx, ny, 0);
+    CUDA_POST_KERNEL();
+
+    airy_cuda_launch_cell_to_qx_faces(im.d_qxc, im.d_qx_face, nx, ny, 0);
+    CUDA_POST_KERNEL();
+    airy_cuda_launch_cell_to_qy_faces(im.d_qyc, im.d_qy_face, nx, ny, 0);
+    CUDA_POST_KERNEL();
+
+    CUDA_CHECK(cudaMemcpy(d_qx_tilde, im.d_qx_face, nBytesQx, cudaMemcpyDeviceToDevice));
+    CUDA_CHECK(cudaMemcpy(d_qy_tilde, im.d_qy_face, nBytesQy, cudaMemcpyDeviceToDevice));
+}

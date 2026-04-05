@@ -7,10 +7,11 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstddef>
 
 #include <cuda_runtime.h>
 
-namespace {
+namespace bp_wd_detail {
 
 #define WD_CUDA_CHECK(x)                                                                                               \
     do {                                                                                                               \
@@ -268,10 +269,7 @@ struct WdGpuScratch {
 
 WdGpuScratch g_wd;
 
-} // namespace
-
-void waveDecomposeGpu(const Grid& g, float d_grad_penalty, int n_diffusion_iters, WaveDecomposition& out) {
-    WD_CUDA_CHECK(cudaSetDevice(0));
+void wdRunDecomposeCore(const Grid& g, float d_grad_penalty, int n_diffusion_iters) {
     const int nx    = g.NX;
     const int ny    = g.NY;
     const int nIter = std::max(0, n_diffusion_iters);
@@ -321,6 +319,19 @@ void waveDecomposeGpu(const Grid& g, float d_grad_penalty, int n_diffusion_iters
     wd_vec_sub_k<<<blocks_for(nqy, threads), threads, 0, 0>>>(
         g_wd.d_qy_src, g_wd.d_qy_bar, g_wd.d_qy_tilde, nqy);
     WD_POST_KERNEL();
+}
+
+} // namespace bp_wd_detail
+
+void waveDecomposeGpu(const Grid& g, float d_grad_penalty, int n_diffusion_iters, WaveDecomposition& out) {
+    WD_CUDA_CHECK(cudaSetDevice(0));
+    bp_wd_detail::wdRunDecomposeCore(g, d_grad_penalty, n_diffusion_iters);
+    const int   nx    = g.NX;
+    const int   ny    = g.NY;
+    const int   ncell = nx * ny;
+    const int   nqx   = (nx + 1) * ny;
+    const int   nqy   = nx * (ny + 1);
+    auto&       g_wd  = bp_wd_detail::g_wd;
 
     out.h_bar.resize(static_cast<size_t>(ncell));
     out.h_tilde.resize(static_cast<size_t>(ncell));
@@ -341,4 +352,20 @@ void waveDecomposeGpu(const Grid& g, float d_grad_penalty, int n_diffusion_iters
                              cudaMemcpyDeviceToHost));
     WD_CUDA_CHECK(cudaMemcpy(out.qy_tilde.data(), g_wd.d_qy_tilde, static_cast<size_t>(nqy) * sizeof(float),
                              cudaMemcpyDeviceToHost));
+}
+
+WaveDecompGpuPtrs waveDecomposeGpuDeviceOnly(const Grid& g, float d_grad_penalty, int n_diffusion_iters) {
+    WD_CUDA_CHECK(cudaSetDevice(0));
+    bp_wd_detail::wdRunDecomposeCore(g, d_grad_penalty, n_diffusion_iters);
+    auto& w = bp_wd_detail::g_wd;
+    WaveDecompGpuPtrs p{};
+    p.nx            = g.NX;
+    p.ny            = g.NY;
+    p.d_h_bar       = w.d_h_bar;
+    p.d_h_tilde     = w.d_h_tilde;
+    p.d_qx_bar      = w.d_qx_bar;
+    p.d_qx_tilde    = w.d_qx_tilde;
+    p.d_qy_bar      = w.d_qy_bar;
+    p.d_qy_tilde    = w.d_qy_tilde;
+    return p;
 }

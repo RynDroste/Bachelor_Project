@@ -7,7 +7,16 @@
 #include <cstdio>
 #include <cstdlib>
 
-namespace {
+#define BP_SWE_CUDA_OK(x)                                                                                              \
+    do {                                                                                                               \
+        cudaError_t _e = (x);                                                                                          \
+        if (_e != cudaSuccess) {                                                                                        \
+            std::fprintf(stderr, "%s:%d CUDA error: %s\n", __FILE__, __LINE__, cudaGetErrorString(_e));              \
+            std::abort();                                                                                              \
+        }                                                                                                              \
+    } while (0)
+
+namespace bp_swe_detail {
 
 #define SWE_CUDA_CHECK(x)                                                                                               \
     do {                                                                                                                \
@@ -377,42 +386,123 @@ void downloadGridToHost(Grid& g) {
     SWE_CUDA_CHECK(cudaMemcpy(g.qy.data(), g_swe.d_qy, nqy * sizeof(float), cudaMemcpyDeviceToHost));
 }
 
-} // namespace
-
-void sweApplyBoundaryConditionsGpu(Grid& g) {
+void uploadTerrainOnly(const Grid& g) {
     g_swe.ensure(g.NX, g.NY);
-    uploadGridToDevice(g);
-    launchBoundary(g_swe.d_qx, g_swe.d_qy, g_swe.d_h, g_swe.d_terrain, g.NX, g.NY);
-    launchClampFaceQ(g_swe.d_qx, g_swe.d_qy, g_swe.d_h, g.NX, g.NY, g.dx, g.dt);
-    SWE_CUDA_CHECK(cudaDeviceSynchronize());
-    downloadGridToHost(g);
+    const size_t ncell = static_cast<size_t>(g.NX) * static_cast<size_t>(g.NY);
+    if (!bp_gpu::sweTerrainDeviceMatchesHostCache(g.terrain.data(), ncell)) {
+        SWE_CUDA_CHECK(
+            cudaMemcpy(g_swe.d_terrain, g.terrain.data(), ncell * sizeof(float), cudaMemcpyHostToDevice));
+        bp_gpu::noteSweTerrainH2d(g.terrain.data(), ncell);
+    }
 }
 
-void sweStepGpu(Grid& g) {
-    g_swe.ensure(g.NX, g.NY);
-    uploadGridToDevice(g);
-
-    launchBoundary(g_swe.d_qx, g_swe.d_qy, g_swe.d_h, g_swe.d_terrain, g.NX, g.NY);
+void runSweStepKernelsNoSync(int nx, int ny, float dx, float dt) {
+    launchBoundary(g_swe.d_qx, g_swe.d_qy, g_swe.d_h, g_swe.d_terrain, nx, ny);
 
     const dim3 tb(16, 16);
-    const dim3 gbQx((g.NX + 1 + tb.x - 1) / tb.x, (g.NY + tb.y - 1) / tb.y);
-    const dim3 gbQy((g.NX + tb.x - 1) / tb.x, (g.NY + 1 + tb.y - 1) / tb.y);
-    const dim3 gbH((g.NX + tb.x - 1) / tb.x, (g.NY + tb.y - 1) / tb.y);
+    const dim3 gbQx((nx + 1 + tb.x - 1) / tb.x, (ny + tb.y - 1) / tb.y);
+    const dim3 gbQy((nx + tb.x - 1) / tb.x, (ny + 1 + tb.y - 1) / tb.y);
+    const dim3 gbH((nx + tb.x - 1) / tb.x, (ny + tb.y - 1) / tb.y);
 
-    step_qx_k<<<gbQx, tb>>>(g_swe.d_h, g_swe.d_qx, g_swe.d_qy, g_swe.d_qx_new, g.NX, g.NY, g.dx, g.dt);
-    step_qy_k<<<gbQy, tb>>>(g_swe.d_h, g_swe.d_qx, g_swe.d_qy, g_swe.d_qy_new, g.NX, g.NY, g.dx, g.dt);
+    step_qx_k<<<gbQx, tb>>>(g_swe.d_h, g_swe.d_qx, g_swe.d_qy, g_swe.d_qx_new, nx, ny, dx, dt);
+    step_qy_k<<<gbQy, tb>>>(g_swe.d_h, g_swe.d_qx, g_swe.d_qy, g_swe.d_qy_new, nx, ny, dx, dt);
     SWE_POST_KERNEL();
 
     std::swap(g_swe.d_qx, g_swe.d_qx_new);
     std::swap(g_swe.d_qy, g_swe.d_qy_new);
-    launchBoundary(g_swe.d_qx, g_swe.d_qy, g_swe.d_h, g_swe.d_terrain, g.NX, g.NY);
+    launchBoundary(g_swe.d_qx, g_swe.d_qy, g_swe.d_h, g_swe.d_terrain, nx, ny);
 
-    step_h_k<<<gbH, tb>>>(g_swe.d_h, g_swe.d_qx, g_swe.d_qy, g_swe.d_h_new, g.NX, g.NY, g.dx, g.dt);
+    step_h_k<<<gbH, tb>>>(g_swe.d_h, g_swe.d_qx, g_swe.d_qy, g_swe.d_h_new, nx, ny, dx, dt);
     SWE_POST_KERNEL();
     std::swap(g_swe.d_h, g_swe.d_h_new);
 
-    launchBoundary(g_swe.d_qx, g_swe.d_qy, g_swe.d_h, g_swe.d_terrain, g.NX, g.NY);
-    launchClampFaceQ(g_swe.d_qx, g_swe.d_qy, g_swe.d_h, g.NX, g.NY, g.dx, g.dt);
-    SWE_CUDA_CHECK(cudaDeviceSynchronize());
-    downloadGridToHost(g);
+    launchBoundary(g_swe.d_qx, g_swe.d_qy, g_swe.d_h, g_swe.d_terrain, nx, ny);
+    launchClampFaceQ(g_swe.d_qx, g_swe.d_qy, g_swe.d_h, nx, ny, dx, dt);
+}
+
+void runBoundaryAndClampNoSync(int nx, int ny, float dx, float dt) {
+    launchBoundary(g_swe.d_qx, g_swe.d_qy, g_swe.d_h, g_swe.d_terrain, nx, ny);
+    launchClampFaceQ(g_swe.d_qx, g_swe.d_qy, g_swe.d_h, nx, ny, dx, dt);
+}
+
+} // namespace bp_swe_detail
+
+void swePrefetchDeviceTerrain(const Grid& g) {
+    BP_SWE_CUDA_OK(cudaSetDevice(0));
+    bp_swe_detail::uploadTerrainOnly(g);
+}
+
+void sweStepGpuInPlaceDevice(float* d_h, float* d_qx, float* d_qy, const Grid& gTerrainRef, int nx, int ny, float dx,
+                             float dt) {
+    BP_SWE_CUDA_OK(cudaSetDevice(0));
+    bp_swe_detail::g_swe.ensure(nx, ny);
+    bp_swe_detail::uploadTerrainOnly(gTerrainRef);
+    const size_t ncell = static_cast<size_t>(nx) * static_cast<size_t>(ny);
+    const size_t nqx   = static_cast<size_t>(nx + 1) * static_cast<size_t>(ny);
+    const size_t nqy   = static_cast<size_t>(nx) * static_cast<size_t>(ny + 1);
+    BP_SWE_CUDA_OK(
+        cudaMemcpy(bp_swe_detail::g_swe.d_h, d_h, ncell * sizeof(float), cudaMemcpyDeviceToDevice));
+    BP_SWE_CUDA_OK(
+        cudaMemcpy(bp_swe_detail::g_swe.d_qx, d_qx, nqx * sizeof(float), cudaMemcpyDeviceToDevice));
+    BP_SWE_CUDA_OK(
+        cudaMemcpy(bp_swe_detail::g_swe.d_qy, d_qy, nqy * sizeof(float), cudaMemcpyDeviceToDevice));
+    bp_swe_detail::runSweStepKernelsNoSync(nx, ny, dx, dt);
+    BP_SWE_CUDA_OK(cudaDeviceSynchronize());
+    BP_SWE_CUDA_OK(
+        cudaMemcpy(d_h, bp_swe_detail::g_swe.d_h, ncell * sizeof(float), cudaMemcpyDeviceToDevice));
+    BP_SWE_CUDA_OK(
+        cudaMemcpy(d_qx, bp_swe_detail::g_swe.d_qx, nqx * sizeof(float), cudaMemcpyDeviceToDevice));
+    BP_SWE_CUDA_OK(
+        cudaMemcpy(d_qy, bp_swe_detail::g_swe.d_qy, nqy * sizeof(float), cudaMemcpyDeviceToDevice));
+}
+
+void sweApplyBoundaryGpuInPlaceDevice(float* d_h, float* d_qx, float* d_qy, const Grid& gTerrainRef, int nx, int ny,
+                                      float dx, float dt) {
+    BP_SWE_CUDA_OK(cudaSetDevice(0));
+    bp_swe_detail::g_swe.ensure(nx, ny);
+    bp_swe_detail::uploadTerrainOnly(gTerrainRef);
+    const size_t ncell = static_cast<size_t>(nx) * static_cast<size_t>(ny);
+    const size_t nqx   = static_cast<size_t>(nx + 1) * static_cast<size_t>(ny);
+    const size_t nqy   = static_cast<size_t>(nx) * static_cast<size_t>(ny + 1);
+    BP_SWE_CUDA_OK(
+        cudaMemcpy(bp_swe_detail::g_swe.d_h, d_h, ncell * sizeof(float), cudaMemcpyDeviceToDevice));
+    BP_SWE_CUDA_OK(
+        cudaMemcpy(bp_swe_detail::g_swe.d_qx, d_qx, nqx * sizeof(float), cudaMemcpyDeviceToDevice));
+    BP_SWE_CUDA_OK(
+        cudaMemcpy(bp_swe_detail::g_swe.d_qy, d_qy, nqy * sizeof(float), cudaMemcpyDeviceToDevice));
+    bp_swe_detail::runBoundaryAndClampNoSync(nx, ny, dx, dt);
+    BP_SWE_CUDA_OK(cudaDeviceSynchronize());
+    BP_SWE_CUDA_OK(
+        cudaMemcpy(d_h, bp_swe_detail::g_swe.d_h, ncell * sizeof(float), cudaMemcpyDeviceToDevice));
+    BP_SWE_CUDA_OK(
+        cudaMemcpy(d_qx, bp_swe_detail::g_swe.d_qx, nqx * sizeof(float), cudaMemcpyDeviceToDevice));
+    BP_SWE_CUDA_OK(
+        cudaMemcpy(d_qy, bp_swe_detail::g_swe.d_qy, nqy * sizeof(float), cudaMemcpyDeviceToDevice));
+}
+
+void sweDownloadGridFromDevice(Grid& g, const float* d_h, const float* d_qx, const float* d_qy) {
+    BP_SWE_CUDA_OK(cudaSetDevice(0));
+    const size_t ncell = static_cast<size_t>(g.NX) * static_cast<size_t>(g.NY);
+    const size_t nqx   = static_cast<size_t>(g.NX + 1) * static_cast<size_t>(g.NY);
+    const size_t nqy   = static_cast<size_t>(g.NX) * static_cast<size_t>(g.NY + 1);
+    BP_SWE_CUDA_OK(cudaMemcpy(g.h.data(), d_h, ncell * sizeof(float), cudaMemcpyDeviceToHost));
+    BP_SWE_CUDA_OK(cudaMemcpy(g.qx.data(), d_qx, nqx * sizeof(float), cudaMemcpyDeviceToHost));
+    BP_SWE_CUDA_OK(cudaMemcpy(g.qy.data(), d_qy, nqy * sizeof(float), cudaMemcpyDeviceToHost));
+}
+
+void sweApplyBoundaryConditionsGpu(Grid& g) {
+    bp_swe_detail::g_swe.ensure(g.NX, g.NY);
+    bp_swe_detail::uploadGridToDevice(g);
+    bp_swe_detail::runBoundaryAndClampNoSync(g.NX, g.NY, g.dx, g.dt);
+    BP_SWE_CUDA_OK(cudaDeviceSynchronize());
+    bp_swe_detail::downloadGridToHost(g);
+}
+
+void sweStepGpu(Grid& g) {
+    bp_swe_detail::g_swe.ensure(g.NX, g.NY);
+    bp_swe_detail::uploadGridToDevice(g);
+
+    bp_swe_detail::runSweStepKernelsNoSync(g.NX, g.NY, g.dx, g.dt);
+    BP_SWE_CUDA_OK(cudaDeviceSynchronize());
+    bp_swe_detail::downloadGridToHost(g);
 }

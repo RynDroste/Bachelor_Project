@@ -50,6 +50,12 @@ constexpr float kEtaRef = kReflectPlaneY;
 constexpr float kWetDepthEps = 1e-3f;
 // Shallow-water vertex blend: η_vertex = mix(kEtaRef, η_sampled, saturate(h_avg / range)).
 constexpr float kShoreBlendRange = 2.0f;
+// Gerstner overlay on water mesh (visual only). 0 disables.
+constexpr float kGerstnerWeight = 1.0f;
+// Fragment fBM bump (water_surface.frag). Strength 0 disables noise normals.
+constexpr float kWaterWaveScale      = 0.09f;
+constexpr float kWaterWaveStrength   = 0.055f;
+constexpr float kWaterAnimationSpeed = 0.85f;
 // Opaque seabed / land mesh under the water (uses g.terrain / texB).
 constexpr bool kRenderTerrainMesh = true;
 
@@ -375,6 +381,11 @@ int main() {
     GLint locWetEps  = glGetUniformLocation(prog, "uWetDepthEps");
     GLint locEtaRefU = glGetUniformLocation(prog, "uEtaRef");
     GLint locShoreBlendRange = glGetUniformLocation(prog, "uShoreBlendRange");
+    GLint locWaterTime       = glGetUniformLocation(prog, "uTime");
+    GLint locGerstnerWeight  = glGetUniformLocation(prog, "uGerstnerWeight");
+    GLint locWaveScale       = glGetUniformLocation(prog, "uWaveScale");
+    GLint locWaveStrength    = glGetUniformLocation(prog, "uWaveStrength");
+    GLint locWaterAnimation  = glGetUniformLocation(prog, "uWaterAnimation");
 
     Grid                      g(kNx, kNy, kDx, kDt);
     std::unique_ptr<Grid>     gCompareSwe;
@@ -715,6 +726,16 @@ int main() {
                 glUniform1f(locEtaRefU, kEtaRef);
             if (locShoreBlendRange >= 0)
                 glUniform1f(locShoreBlendRange, kShoreBlendRange);
+            if (locWaterTime >= 0)
+                glUniform1f(locWaterTime, static_cast<float>(glfwGetTime()));
+            if (locGerstnerWeight >= 0)
+                glUniform1f(locGerstnerWeight, kGerstnerWeight);
+            if (locWaveScale >= 0)
+                glUniform1f(locWaveScale, kWaterWaveScale);
+            if (locWaveStrength >= 0)
+                glUniform1f(locWaveStrength, kWaterWaveStrength);
+            if (locWaterAnimation >= 0)
+                glUniform1f(locWaterAnimation, kWaterAnimationSpeed);
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D, texH);
             if (locTexH >= 0)

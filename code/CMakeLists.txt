@@ -88,6 +88,7 @@ add_executable(DamSWE
     "${CMAKE_CURRENT_SOURCE_DIR}/src/render/dam.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/render/shader_file.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/solver_pipeline/shallow_water_solver.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/solver_pipeline/gpu_terrain_h2d_cache.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/solver_pipeline/shallow_water_solver_gpu.cu"
     "${CMAKE_CURRENT_SOURCE_DIR}/external/glad/src/glad.c"
 )
@@ -108,6 +109,7 @@ add_executable(DiffusionDispersionBench
     "${CMAKE_CURRENT_SOURCE_DIR}/tools/diffusion_dispersion_bench.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/solver_pipeline/wavedecomposer.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/solver_pipeline/shallow_water_solver.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/solver_pipeline/gpu_terrain_h2d_cache.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/solver_pipeline/wave_decompose_gpu.cu"
 )
 set_target_properties(DiffusionDispersionBench PROPERTIES CUDA_SEPARABLE_COMPILATION ON)

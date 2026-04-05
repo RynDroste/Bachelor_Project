@@ -6,6 +6,7 @@
 #include "solver_pipeline/wavedecomposer.h"
 
 #include <algorithm>
+#include <cstring>
 #include <memory>
 
 namespace {
@@ -23,21 +24,45 @@ struct BarGridScratch {
 };
 static BarGridScratch g_barScratch;
 
+// dec.* and Grid fields share the same row-major layouts (see Grid::H/QX/QY and WaveDecomposition).
 void assignBarState(Grid& dst, const Grid& terrainSrc, const WaveDecomposition& dec) {
-    for (int j = 0; j < dst.NY; ++j) {
-        for (int i = 0; i < dst.NX; ++i) {
-            dst.B(i, j) = terrainSrc.B(i, j);
-            dst.H(i, j) = dec.h_bar[i + j * dst.NX];
-        }
-    }
-    for (int j = 0; j < dst.NY; ++j) {
-        for (int i = 0; i <= dst.NX; ++i)
-            dst.QX(i, j) = dec.qx_bar[i + j * (dst.NX + 1)];
-    }
-    for (int j = 0; j <= dst.NY; ++j) {
-        for (int i = 0; i < dst.NX; ++i)
-            dst.QY(i, j) = dec.qy_bar[i + j * dst.NX];
-    }
+    const int            nx    = dst.NX;
+    const int            ny    = dst.NY;
+    const size_t         ncell = static_cast<size_t>(nx) * static_cast<size_t>(ny);
+    const size_t         nqx   = static_cast<size_t>(nx + 1) * static_cast<size_t>(ny);
+    const size_t         nqy   = static_cast<size_t>(nx) * static_cast<size_t>(ny + 1);
+    const size_t         bTerrain = ncell * sizeof(float);
+
+    std::memcpy(dst.terrain.data(), terrainSrc.terrain.data(), bTerrain);
+    std::memcpy(dst.h.data(), dec.h_bar.data(), bTerrain);
+    std::memcpy(dst.qx.data(), dec.qx_bar.data(), nqx * sizeof(float));
+    std::memcpy(dst.qy.data(), dec.qy_bar.data(), nqy * sizeof(float));
+}
+
+void recombineBarPlusTilde(Grid& g, const Grid& gBar1, const WaveDecomposition& dec) {
+    const int    nx    = g.NX;
+    const int    ny    = g.NY;
+    const size_t ncell = static_cast<size_t>(nx) * static_cast<size_t>(ny);
+    const size_t nqx   = static_cast<size_t>(nx + 1) * static_cast<size_t>(ny);
+    const size_t nqy   = static_cast<size_t>(nx) * static_cast<size_t>(ny + 1);
+
+    const float* hb  = gBar1.h.data();
+    const float* ht  = dec.h_tilde.data();
+    float*       gh  = g.h.data();
+    for (size_t k = 0; k < ncell; ++k)
+        gh[k] = hb[k] + ht[k];
+
+    const float* qxb = gBar1.qx.data();
+    const float* qxt = dec.qx_tilde.data();
+    float*       gqx = g.qx.data();
+    for (size_t k = 0; k < nqx; ++k)
+        gqx[k] = qxb[k] + qxt[k];
+
+    const float* qyb = gBar1.qy.data();
+    const float* qyt = dec.qy_tilde.data();
+    float*       gqy = g.qy.data();
+    for (size_t k = 0; k < nqy; ++k)
+        gqy[k] = qyb[k] + qyt[k];
 }
 
 } // namespace
@@ -70,8 +95,11 @@ void coupledSubstep(Grid& g, float halfW, float halfD,
     if (!haveHtildePrevHalf)
         std::copy(dec.h_tilde.begin(), dec.h_tilde.end(), hTildeSym.begin());
     else {
-        for (size_t i = 0; i < nh; ++i)
-            hTildeSym[i] = 0.5f * (hTildePrevHalf[i] + dec.h_tilde[i]);
+        const float* prev = hTildePrevHalf.data();
+        const float* cur  = dec.h_tilde.data();
+        float*       out  = hTildeSym.data();
+        for (size_t k = 0; k < nh; ++k)
+            out[k] = 0.5f * (prev[k] + cur[k]);
     }
 
     airy.step(dt, 9.81f, hTildeSym.data(), dec.h_bar.data(), dec.qx_tilde.data(), dec.qy_tilde.data());
@@ -81,18 +109,7 @@ void coupledSubstep(Grid& g, float halfW, float halfD,
     std::copy(dec.h_tilde.begin(), dec.h_tilde.end(), hTildePrevHalf.begin());
     haveHtildePrevHalf = true;
 
-    for (int j = 0; j < g.NY; ++j) {
-        for (int i = 0; i < g.NX; ++i)
-            g.H(i, j) = gBar1.H(i, j) + dec.h_tilde[i + j * g.NX];
-    }
-    for (int j = 0; j < g.NY; ++j) {
-        for (int i = 0; i <= g.NX; ++i)
-            g.QX(i, j) = gBar1.QX(i, j) + dec.qx_tilde[i + j * (g.NX + 1)];
-    }
-    for (int j = 0; j <= g.NY; ++j) {
-        for (int i = 0; i < g.NX; ++i)
-            g.QY(i, j) = gBar1.QY(i, j) + dec.qy_tilde[i + j * g.NX];
-    }
+    recombineBarPlusTilde(g, gBar1, dec);
 
     sweApplyBoundaryConditionsGpu(g);
 }

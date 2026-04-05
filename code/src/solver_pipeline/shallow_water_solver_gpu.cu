@@ -1,4 +1,5 @@
 #include "solver_pipeline/shallow_water_solver.h"
+#include "solver_pipeline/gpu_terrain_h2d_cache.hpp"
 
 #include <cuda_runtime.h>
 
@@ -324,6 +325,7 @@ struct SweGpuBuffers {
         if (nx == nxIn && ny == nyIn && d_h)
             return;
 
+        bp_gpu::terrainCacheInvalidate();
         cudaFree(d_h);
         cudaFree(d_qx);
         cudaFree(d_qy);
@@ -359,7 +361,11 @@ void uploadGridToDevice(const Grid& g) {
     SWE_CUDA_CHECK(cudaMemcpy(g_swe.d_h, g.h.data(), ncell * sizeof(float), cudaMemcpyHostToDevice));
     SWE_CUDA_CHECK(cudaMemcpy(g_swe.d_qx, g.qx.data(), nqx * sizeof(float), cudaMemcpyHostToDevice));
     SWE_CUDA_CHECK(cudaMemcpy(g_swe.d_qy, g.qy.data(), nqy * sizeof(float), cudaMemcpyHostToDevice));
-    SWE_CUDA_CHECK(cudaMemcpy(g_swe.d_terrain, g.terrain.data(), ncell * sizeof(float), cudaMemcpyHostToDevice));
+    if (!bp_gpu::sweTerrainDeviceMatchesHostCache(g.terrain.data(), ncell)) {
+        SWE_CUDA_CHECK(
+            cudaMemcpy(g_swe.d_terrain, g.terrain.data(), ncell * sizeof(float), cudaMemcpyHostToDevice));
+        bp_gpu::noteSweTerrainH2d(g.terrain.data(), ncell);
+    }
 }
 
 void downloadGridToHost(Grid& g) {

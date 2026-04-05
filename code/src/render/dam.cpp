@@ -132,11 +132,16 @@ void allocGridTextures(int nx, int ny, GLuint& texH, GLuint& texB) {
     glBindTexture(GL_TEXTURE_2D, 0);
 }
 
-void uploadGridTextures(const Grid& g, GLuint texH, GLuint texB) {
-    glBindTexture(GL_TEXTURE_2D, texH);
-    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, g.NX, g.NY, GL_RED, GL_FLOAT, g.h.data());
+// B (bed) is fixed after setupDamInitialState until R resets; h changes every frame.
+void uploadTerrainTexture(const Grid& g, GLuint texB) {
     glBindTexture(GL_TEXTURE_2D, texB);
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, g.NX, g.NY, GL_RED, GL_FLOAT, g.terrain.data());
+    glBindTexture(GL_TEXTURE_2D, 0);
+}
+
+void uploadWaterDepthTexture(const Grid& g, GLuint texH) {
+    glBindTexture(GL_TEXTURE_2D, texH);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, g.NX, g.NY, GL_RED, GL_FLOAT, g.h.data());
     glBindTexture(GL_TEXTURE_2D, 0);
 }
 
@@ -358,6 +363,7 @@ int main() {
 
     GLuint texH = 0, texB = 0;
     allocGridTextures(kNx, kNy, texH, texB);
+    uploadTerrainTexture(g, texB);
 
     GLuint vao = 0, vbo = 0, ebo = 0;
     glGenVertexArrays(1, &vao);
@@ -404,6 +410,7 @@ int main() {
         }
         if (glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS) {
             setupDamInitialState(g);
+            uploadTerrainTexture(g, texB);
             simT = 0.0;
         }
 
@@ -425,7 +432,7 @@ int main() {
             std::fflush(stdout);
         }
 
-        uploadGridTextures(g, texH, texB);
+        uploadWaterDepthTexture(g, texH);
 
         const float aspect = frame.fbH > 0 ? static_cast<float>(frame.fbW) / static_cast<float>(frame.fbH) : 1.f;
         const float yaw = glm::radians(kFixedCamYawDeg);

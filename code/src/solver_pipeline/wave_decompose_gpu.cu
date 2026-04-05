@@ -1,6 +1,7 @@
 // GPU wave decomposition (Jeschke & Wojtan-style low-pass / tilde split).
 
 #include "solver_pipeline/wave_decompose_gpu.hpp"
+#include "solver_pipeline/gpu_terrain_h2d_cache.hpp"
 
 #include "solver_pipeline/wavedecomposer.h"
 
@@ -234,6 +235,7 @@ struct WdGpuScratch {
         d_ping = d_pong = d_qx_src = d_qy_src = nullptr;
         d_h_bar = d_h_tilde = d_qx_bar = d_qx_tilde = d_qy_bar = d_qy_tilde = nullptr;
         nx = ny = 0;
+        bp_gpu::terrainCacheInvalidate();
     }
 
     void ensure(int nx_, int ny_) {
@@ -281,8 +283,11 @@ void waveDecomposeGpu(const Grid& g, float d_grad_penalty, int n_diffusion_iters
     const int nqy   = nx * (ny + 1);
 
     WD_CUDA_CHECK(cudaMemcpy(g_wd.d_h, g.h.data(), static_cast<size_t>(ncell) * sizeof(float), cudaMemcpyHostToDevice));
-    WD_CUDA_CHECK(
-        cudaMemcpy(g_wd.d_b, g.terrain.data(), static_cast<size_t>(ncell) * sizeof(float), cudaMemcpyHostToDevice));
+    if (!bp_gpu::terrainHostMatchesCachedSnapshot(g.terrain.data(), static_cast<std::size_t>(ncell))) {
+        WD_CUDA_CHECK(cudaMemcpy(g_wd.d_b, g.terrain.data(), static_cast<size_t>(ncell) * sizeof(float),
+                                 cudaMemcpyHostToDevice));
+        bp_gpu::noteWaveDecomposeTerrainH2d(g.terrain.data(), static_cast<std::size_t>(ncell));
+    }
 
     constexpr int threads = 256;
     wd_alpha_from_h_k<<<blocks_for(ncell, threads), threads, 0, 0>>>(

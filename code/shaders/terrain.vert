@@ -1,4 +1,4 @@
-#version 330 core
+#version 410 core
 layout (location = 0) in vec2 aCornerIJ;
 uniform mat4 uMVP;
 uniform float uDx;

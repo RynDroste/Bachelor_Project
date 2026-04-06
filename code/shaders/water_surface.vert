@@ -1,7 +1,5 @@
-#version 330 core
-// Corner IJ; H/B from textures. Weighted blend at wet/dry boundaries to avoid steep
-// triangles ("folded" shoreline); dry corners use flat uEtaRef + fragment discard.
-// Optional Gerstner ripples on η (visual only; not in the SWE solve).
+#version 410 core
+// Grid corners: blend wet/dry; Gerstner is visual-only (not SWE).
 layout (location = 0) in vec2 aCornerIJ;
 uniform mat4 uMVP;
 uniform float uDx;
@@ -11,13 +9,11 @@ uniform sampler2D uH;
 uniform sampler2D uB;
 uniform float uWetDepthEps;
 uniform float uEtaRef;
-// Shore band: shoreBlend = saturate(hAvg / range); vertex y = mix(flat eta_ref, sampled eta, shoreBlend).
 uniform float uShoreBlendRange;
 uniform float uTime;
 uniform float uGerstnerWeight;
 out vec3 vWorldPos;
 out float vDepth;
-out vec4 vClipPos;
 
 const float PI = 3.14159265;
 const float G = 9.81;
@@ -69,8 +65,6 @@ void main() {
             : 1.0;
         y = mix(uEtaRef, ySampled, shoreBlend);
     } else {
-        // Fully dry: keep mesh near reference sea level so adjacent wet corners do not
-        // form vertical walls; fragments with tiny vDepth are discarded.
         y = uEtaRef;
         hAvg = 0.0;
     }
@@ -99,5 +93,4 @@ void main() {
     vWorldPos = vec3(wx + gDisp.x, y + gDisp.y, wz + gDisp.z);
     vDepth = hAvg;
     gl_Position = uMVP * vec4(vWorldPos, 1.0);
-    vClipPos = gl_Position;
 }

@@ -1,4 +1,4 @@
-#version 330 core
+#version 410 core
 in vec3 vNrm;
 uniform vec3 uLightDir;
 uniform vec3 uBaseColor;

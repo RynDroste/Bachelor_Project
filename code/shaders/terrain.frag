@@ -1,4 +1,4 @@
-#version 330 core
+#version 410 core
 in vec3 vWorldPos;
 in vec2 vIJ;
 uniform sampler2D uB;

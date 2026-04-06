@@ -33,44 +33,36 @@ constexpr int   kSubsteps = 2;
 constexpr bool  kCoupledStep = true;
 constexpr bool  kSplitCompareSwe = false;
 constexpr float kGradPenaltyD = 0.25f;
-constexpr bool  kVsync          = false; 
+constexpr bool  kVsync          = false;
+constexpr int   kWindowWidth    = 1280;
+constexpr int   kWindowHeight   = 720;
 constexpr int   kWaveDiffuseIters = 8; 
 constexpr float kCamFovDeg      = 55.f;
 constexpr float kCamTargetY     = 3.5f;
-// Fixed camera: world-space eye and look-at target (edit these to frame the pool).
-// Default matches previous orbit: radius 108, yaw 0.85 rad, height 44, target y = kCamTargetY.
 constexpr glm::vec3 kFixedCamEye(70.956f, 44.f, 81.118f);
 constexpr glm::vec3 kFixedCamTarget(0.f, kCamTargetY, 0.f);
-// Horizontal reflection plane y = const (flat-pool approximation; matches B=0, h≈h0).
 constexpr float kReflectPlaneY = 4.0f;
-// Initial free-surface elevation η = B + h. Depth follows terrain: h = max(0, η_ref - B).
-// When B ≡ 0 this matches the old uniform h0 = kReflectPlaneY.
 constexpr float kEtaRef = kReflectPlaneY;
-// Match shallow-water dry threshold (~1e-3 in solver); water frag discards below this.
 constexpr float kWetDepthEps = 1e-3f;
-// Shallow-water vertex blend: η_vertex = mix(kEtaRef, η_sampled, saturate(h_avg / range)).
 constexpr float kShoreBlendRange = 2.0f;
-// Gerstner overlay on water mesh (visual only). 0 disables.
 constexpr float kGerstnerWeight = 1.0f;
-// Fragment fBM bump (water_surface.frag). Strength 0 disables noise normals.
 constexpr float kWaterWaveScale      = 0.09f;
 constexpr float kWaterWaveStrength   = 0.055f;
 constexpr float kWaterAnimationSpeed = 0.85f;
-// Refraction pass + water shader (must match perspective in drawPane).
-constexpr float kProjNear            = 0.1f;
-constexpr float kProjFar             = 500.f;
-constexpr float kRefractionDistort   = 0.028f;
-constexpr float kWaterIOR            = 1.33f;
-constexpr float kWaterReflectionsMix = 0.02f;
-constexpr float kRefractionTransparency = 0.52f;
-static const glm::vec3 kAbsorptionColor(0.08f, 0.26f, 0.34f);
-constexpr float kAbsorptionDensity = 0.18f;
-static const glm::vec3 kWaterEmission(0.10f, 0.24f, 0.26f);
-constexpr float kEmissionStrength = 0.13f;
-// Opaque seabed / land mesh under the water (uses g.terrain / texB).
+constexpr float kWaterIOR                = 1.33f;
+constexpr float kWaterRefractionParallax = 1.0f;
+constexpr float kWaterReflections        = 0.86f;
+constexpr glm::vec3 kWaterColor(0.93f, 0.97f, 1.0f);
+constexpr float kWaterAlpha              = 0.76f;
+constexpr float kClipNear      = 0.1f;
+constexpr float kClipFar       = 500.f;
+constexpr float kDepthAbsorb   = 0.008f;
+constexpr float kRefractionMaxOffset = 0.06f;
+constexpr float kRefractionLinTol    = 0.12f;
+constexpr float kEnvWaveRough = 0.14f;
 constexpr bool kRenderTerrainMesh = true;
 
-// Unit cube (36 verts); rendered from the inside as the skybox.
+// Skybox: unit cube, 36 verts, interior view.
 static const float kSkyboxVerts[] = {
     -1.f, 1.f,  -1.f, -1.f, -1.f, -1.f, 1.f,  -1.f, -1.f, 1.f,  -1.f, -1.f, 1.f,  1.f,  -1.f, -1.f, 1.f,  -1.f,
     -1.f, -1.f, 1.f,  -1.f, -1.f, -1.f, -1.f, 1.f,  -1.f, -1.f, 1.f,  -1.f, -1.f, 1.f,  1.f,  -1.f, -1.f, 1.f,
@@ -159,7 +151,6 @@ void allocGridTextures(int nx, int ny, GLuint& texH, GLuint& texB) {
     glBindTexture(GL_TEXTURE_2D, 0);
 }
 
-// Terrain is static at runtime: upload once after alloc (see main). Water depth h changes every frame.
 void uploadTerrainTexture(const Grid& g, GLuint texB) {
     glBindTexture(GL_TEXTURE_2D, texB);
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, g.NX, g.NY, GL_RED, GL_FLOAT, g.terrain.data());
@@ -240,45 +231,62 @@ void ensureReflectionFBO(int w, int h, GLuint& fbo, GLuint& colorTex, GLuint& de
         std::fprintf(stderr, "reflection FBO incomplete (status 0x%x)\n", static_cast<unsigned>(st));
 }
 
-void ensureRefractionFBO(int w, int h, GLuint& fbo, GLuint& colorTex, GLuint& depthTex, int& curW, int& curH) {
+void ensureRefractTex(int w, int h, GLuint& tex, int& curW, int& curH) {
+    if (w <= 0 || h <= 0)
+        return;
+    if (tex && w == curW && h == curH)
+        return;
+    if (tex) {
+        glDeleteTextures(1, &tex);
+        tex = 0;
+    }
+    curW = w;
+    curH = h;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, w, h, 0, GL_RGB, GL_FLOAT, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glBindTexture(GL_TEXTURE_2D, 0);
+}
+
+void ensureRefractDepthFbo(int w, int h, GLuint& fbo, GLuint& depthTex, int& curW, int& curH) {
     if (w <= 0 || h <= 0)
         return;
     if (fbo && w == curW && h == curH)
         return;
     if (fbo) {
         glDeleteFramebuffers(1, &fbo);
-        glDeleteTextures(1, &colorTex);
         glDeleteTextures(1, &depthTex);
         fbo = 0;
-        colorTex = 0;
         depthTex = 0;
     }
     curW = w;
     curH = h;
     glGenFramebuffers(1, &fbo);
-    glGenTextures(1, &colorTex);
     glGenTextures(1, &depthTex);
-    glBindTexture(GL_TEXTURE_2D, colorTex);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, w, h, 0, GL_RGB, GL_FLOAT, nullptr);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glBindTexture(GL_TEXTURE_2D, depthTex);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, w, h, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT_24_8,
-                 nullptr);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, w, h, 0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, colorTex, 0);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depthTex, 0);
+    glDrawBuffer(GL_NONE);
+    glReadBuffer(GL_NONE);
     const GLenum st = glCheckFramebufferStatus(GL_FRAMEBUFFER);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glBindTexture(GL_TEXTURE_2D, 0);
-    if (st != GL_FRAMEBUFFER_COMPLETE)
-        std::fprintf(stderr, "refraction FBO incomplete (status 0x%x)\n", static_cast<unsigned>(st));
+    if (st != GL_FRAMEBUFFER_COMPLETE) {
+        std::fprintf(stderr, "refract depth FBO incomplete (status 0x%x)\n", static_cast<unsigned>(st));
+        glDeleteFramebuffers(1, &fbo);
+        glDeleteTextures(1, &depthTex);
+        fbo      = 0;
+        depthTex = 0;
+        curW = curH = 0;
+    }
 }
 
 void framebufferSizeCB(GLFWwindow* w, int width, int height) {
@@ -361,14 +369,14 @@ int main() {
         std::fprintf(stderr, "glfwInit failed\n");
         return 1;
     }
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 #ifdef __APPLE__
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
 #endif
 
-    GLFWwindow* window = glfwCreateWindow(2560, 1440, "Shallow water", nullptr, nullptr);
+    GLFWwindow* window = glfwCreateWindow(kWindowWidth, kWindowHeight, "Shallow water", nullptr, nullptr);
     if (!window) {
         std::fprintf(stderr, "glfwCreateWindow failed\n");
         glfwTerminate();
@@ -428,6 +436,7 @@ int main() {
     GLint locTexB = glGetUniformLocation(prog, "uB");
     GLint locEnvMap = glGetUniformLocation(prog, "uEnvMap");
     GLint locEnvMaxMip = glGetUniformLocation(prog, "uEnvMaxMip");
+    GLint locWaveRough = glGetUniformLocation(prog, "uWaveRough");
     GLint locReflTex = glGetUniformLocation(prog, "uReflectionTex");
     GLint locReflVP  = glGetUniformLocation(prog, "uReflViewProj");
     GLint locWetEps  = glGetUniformLocation(prog, "uWetDepthEps");
@@ -438,18 +447,18 @@ int main() {
     GLint locWaveScale       = glGetUniformLocation(prog, "uWaveScale");
     GLint locWaveStrength    = glGetUniformLocation(prog, "uWaveStrength");
     GLint locWaterAnimation  = glGetUniformLocation(prog, "uWaterAnimation");
-    GLint locRefractionTex   = glGetUniformLocation(prog, "uRefractionTex");
-    GLint locRefractionDepth = glGetUniformLocation(prog, "uRefractionDepth");
-    GLint locZNear           = glGetUniformLocation(prog, "uZNear");
-    GLint locZFar            = glGetUniformLocation(prog, "uZFar");
-    GLint locDistortStrength = glGetUniformLocation(prog, "uDistortStrength");
-    GLint locIOR             = glGetUniformLocation(prog, "uIOR");
-    GLint locWaterReflMix    = glGetUniformLocation(prog, "uWaterReflectionsMix");
-    GLint locAbsorptionColor = glGetUniformLocation(prog, "uAbsorptionColor");
-    GLint locAbsorptionDensityU = glGetUniformLocation(prog, "uAbsorptionDensity");
-    GLint locTransparency    = glGetUniformLocation(prog, "uTransparency");
-    GLint locEmissionColor   = glGetUniformLocation(prog, "uEmissionColor");
-    GLint locEmissionStrength = glGetUniformLocation(prog, "uEmissionStrength");
+    GLint locRefractTex      = glGetUniformLocation(prog, "uRefractionTex");
+    GLint locViewport        = glGetUniformLocation(prog, "uViewport");
+    GLint locViewRot         = glGetUniformLocation(prog, "uViewRot");
+    GLint locWaterIOR        = glGetUniformLocation(prog, "uIOR");
+    GLint locRefractParallax = glGetUniformLocation(prog, "uTransparency");
+    GLint locWaterColor      = glGetUniformLocation(prog, "uWaterColor");
+    GLint locWaterReflections = glGetUniformLocation(prog, "uWaterReflections");
+    GLint locSceneDepth       = glGetUniformLocation(prog, "uSceneDepth");
+    GLint locClipNF           = glGetUniformLocation(prog, "uClipNF");
+    GLint locDepthAbsorb      = glGetUniformLocation(prog, "uDepthAbsorb");
+    GLint locRefractionMaxOffset = glGetUniformLocation(prog, "uRefractionMaxOffset");
+    GLint locRefractionLinTol    = glGetUniformLocation(prog, "uRefractionLinTol");
 
     Grid                      g(kNx, kNy, kDx, kDt);
     std::unique_ptr<Grid>     gCompareSwe;
@@ -468,7 +477,6 @@ int main() {
     }
 
     WaveDecomposition waveDec;
-    // Airy: symmetrized h_tilde across substeps.
     std::vector<float> hTildePrevHalf;
     std::vector<float> hTildeSym;
     bool               haveHtildePrevHalf = false;
@@ -478,7 +486,6 @@ int main() {
     const float halfW = 0.5f * kNx * kDx;
     const float halfD = 0.5f * kNy * kDx;
 
-    // Set g.B(...) before this loop when loading a heightmap; default B is 0.
     for (int j = 0; j < kNy; ++j) {
         for (int i = 0; i < kNx; ++i) {
             const float hInit = fmaxf(0.f, kEtaRef - g.B(i, j));
@@ -567,11 +574,10 @@ int main() {
 
     GLuint reflFbo = 0, reflColorTex = 0, reflDepthRbo = 0;
     int    reflBufW = 0, reflBufH = 0;
-    GLuint refrFbo[2]       = {0, 0};
-    GLuint refrColorTex[2]  = {0, 0};
-    GLuint refrDepthTex[2]  = {0, 0};
-    int    refrBufW[2]      = {0, 0};
-    int    refrBufH[2]      = {0, 0};
+    GLuint refractColorTex = 0;
+    int    refractBufW = 0, refractBufH = 0;
+    GLuint refractDepthFbo = 0, refractDepthTex = 0;
+    int    refractDepthBufW = 0, refractDepthBufH = 0;
 
     glm::vec3 lightDir = glm::normalize(glm::vec3(0.35f, 0.85f, 0.4f));
 
@@ -584,7 +590,6 @@ int main() {
         const float hW  = boat.width * 0.5f;
         const float ext = std::sqrt(hL * hL + hW * hW);
         const float pad = kDx;
-        // Same inset as updateBoat clamp: x-min edge, z at pool centerline; heading 0 -> +x toward interior.
         boat.pos = glm::vec2(-halfW + ext + pad, 0.f);
     }
     boat.heading = 0.f;
@@ -646,76 +651,13 @@ int main() {
             glm::lookAt(kFixedCamEye, kFixedCamTarget, glm::vec3(0.f, 1.f, 0.f));
 
         auto drawPane = [&](int vpX, int vpW, const Grid& grid, float aspect) {
-            glm::mat4 proj      = glm::perspective(glm::radians(kCamFovDeg), aspect, kProjNear, kProjFar);
+            glm::mat4 proj      = glm::perspective(glm::radians(kCamFovDeg), aspect, 0.1f, 500.f);
             glm::mat4 viewRefl  = reflectionViewAcrossY(kReflectPlaneY, kFixedCamEye, kFixedCamTarget);
             glm::mat4 reflVP    = proj * viewRefl;
             glm::mat4 mvp       = proj * view;
 
             uploadWaterDepthTexture(grid, texH);
             fillBoatSolidMesh(boatVerts, boat);
-
-            auto drawMainScene = [&]() {
-                if (skyProg) {
-                    glDepthMask(GL_FALSE);
-                    glDepthFunc(GL_LEQUAL);
-                    glUseProgram(skyProg);
-                    const glm::mat4 skyView = glm::mat4(glm::mat3(view));
-                    if (locSkyProj >= 0)
-                        glUniformMatrix4fv(locSkyProj, 1, GL_FALSE, glm::value_ptr(proj));
-                    if (locSkyView >= 0)
-                        glUniformMatrix4fv(locSkyView, 1, GL_FALSE, glm::value_ptr(skyView));
-                    glActiveTexture(GL_TEXTURE0);
-                    glBindTexture(GL_TEXTURE_CUBE_MAP, envCubemap);
-                    if (locSkyMap >= 0)
-                        glUniform1i(locSkyMap, 0);
-                    glBindVertexArray(skyVao);
-                    glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(sizeof(kSkyboxVerts) / (sizeof(float) * 3u)));
-                    glBindVertexArray(0);
-                    glDepthFunc(GL_LESS);
-                    glDepthMask(GL_TRUE);
-                }
-
-                if (boatProg) {
-                    glUseProgram(boatProg);
-                    glUniformMatrix4fv(locBoatMVP, 1, GL_FALSE, glm::value_ptr(mvp));
-                    glUniform3fv(locBoatLight, 1, glm::value_ptr(lightDir));
-                    const glm::vec3 hullColor(0.78f, 0.44f, 0.2f);
-                    glUniform3fv(locBoatColor, 1, glm::value_ptr(hullColor));
-                    if (locBoatClipRefl >= 0)
-                        glUniform1i(locBoatClipRefl, 0);
-                    glBindVertexArray(boatVao);
-                    glBindBuffer(GL_ARRAY_BUFFER, boatVbo);
-                    glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(boatVerts.size() * sizeof(float)),
-                                    boatVerts.data());
-                    glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(boatVerts.size() / 6));
-                    glBindVertexArray(0);
-                }
-
-                if (kRenderTerrainMesh && terrainProg) {
-                    glDisable(GL_BLEND);
-                    glDepthMask(GL_TRUE);
-                    glUseProgram(terrainProg);
-                    if (locTerrainMVP >= 0)
-                        glUniformMatrix4fv(locTerrainMVP, 1, GL_FALSE, glm::value_ptr(mvp));
-                    if (locTerrainLight >= 0)
-                        glUniform3fv(locTerrainLight, 1, glm::value_ptr(lightDir));
-                    if (locTerrainCam >= 0)
-                        glUniform3fv(locTerrainCam, 1, glm::value_ptr(kFixedCamEye));
-                    if (locTerrainDx >= 0)
-                        glUniform1f(locTerrainDx, kDx);
-                    if (locTerrainHalfW >= 0)
-                        glUniform1f(locTerrainHalfW, halfW);
-                    if (locTerrainHalfD >= 0)
-                        glUniform1f(locTerrainHalfD, halfD);
-                    glActiveTexture(GL_TEXTURE0);
-                    glBindTexture(GL_TEXTURE_2D, texB);
-                    if (locTerrainTexB >= 0)
-                        glUniform1i(locTerrainTexB, 0);
-                    glBindVertexArray(vao);
-                    glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(indices.size()), GL_UNSIGNED_INT, nullptr);
-                    glBindVertexArray(0);
-                }
-            };
 
             ensureReflectionFBO(vpW, frame.fbH, reflFbo, reflColorTex, reflDepthRbo, reflBufW, reflBufH);
             if (reflFbo) {
@@ -769,21 +711,86 @@ int main() {
                 glBindFramebuffer(GL_FRAMEBUFFER, 0);
             }
 
-            const int refrSlot = kSplitCompareSwe ? (vpX == 0 ? 0 : 1) : 0;
-            ensureRefractionFBO(vpW, frame.fbH, refrFbo[refrSlot], refrColorTex[refrSlot], refrDepthTex[refrSlot],
-                                refrBufW[refrSlot], refrBufH[refrSlot]);
-            if (refrFbo[refrSlot]) {
-                glBindFramebuffer(GL_FRAMEBUFFER, refrFbo[refrSlot]);
-                glViewport(0, 0, vpW, frame.fbH);
-                glClearColor(0.04f, 0.06f, 0.1f, 1.f);
-                glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-                glEnable(GL_DEPTH_TEST);
-                drawMainScene();
+            glViewport(vpX, 0, vpW, frame.fbH);
+
+            if (skyProg) {
+                glDepthMask(GL_FALSE);
+                glDepthFunc(GL_LEQUAL);
+                glUseProgram(skyProg);
+                const glm::mat4 skyView = glm::mat4(glm::mat3(view));
+                if (locSkyProj >= 0)
+                    glUniformMatrix4fv(locSkyProj, 1, GL_FALSE, glm::value_ptr(proj));
+                if (locSkyView >= 0)
+                    glUniformMatrix4fv(locSkyView, 1, GL_FALSE, glm::value_ptr(skyView));
+                glActiveTexture(GL_TEXTURE0);
+                glBindTexture(GL_TEXTURE_CUBE_MAP, envCubemap);
+                if (locSkyMap >= 0)
+                    glUniform1i(locSkyMap, 0);
+                glBindVertexArray(skyVao);
+                glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(sizeof(kSkyboxVerts) / (sizeof(float) * 3u)));
+                glBindVertexArray(0);
+                glDepthFunc(GL_LESS);
+                glDepthMask(GL_TRUE);
+            }
+
+            if (kRenderTerrainMesh && terrainProg) {
+                glDisable(GL_BLEND);
+                glDepthMask(GL_TRUE);
+                glUseProgram(terrainProg);
+                if (locTerrainMVP >= 0)
+                    glUniformMatrix4fv(locTerrainMVP, 1, GL_FALSE, glm::value_ptr(mvp));
+                if (locTerrainLight >= 0)
+                    glUniform3fv(locTerrainLight, 1, glm::value_ptr(lightDir));
+                if (locTerrainCam >= 0)
+                    glUniform3fv(locTerrainCam, 1, glm::value_ptr(kFixedCamEye));
+                if (locTerrainDx >= 0)
+                    glUniform1f(locTerrainDx, kDx);
+                if (locTerrainHalfW >= 0)
+                    glUniform1f(locTerrainHalfW, halfW);
+                if (locTerrainHalfD >= 0)
+                    glUniform1f(locTerrainHalfD, halfD);
+                glActiveTexture(GL_TEXTURE0);
+                glBindTexture(GL_TEXTURE_2D, texB);
+                if (locTerrainTexB >= 0)
+                    glUniform1i(locTerrainTexB, 0);
+                glBindVertexArray(vao);
+                glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(indices.size()), GL_UNSIGNED_INT, nullptr);
+                glBindVertexArray(0);
+            }
+
+            ensureRefractTex(vpW, frame.fbH, refractColorTex, refractBufW, refractBufH);
+            if (refractColorTex) {
+                glBindTexture(GL_TEXTURE_2D, refractColorTex);
+                glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, vpX, 0, vpW, frame.fbH);
+                glBindTexture(GL_TEXTURE_2D, 0);
+            }
+            ensureRefractDepthFbo(vpW, frame.fbH, refractDepthFbo, refractDepthTex, refractDepthBufW,
+                                  refractDepthBufH);
+            if (refractDepthFbo) {
+                glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+                glBindFramebuffer(GL_DRAW_FRAMEBUFFER, refractDepthFbo);
+                glBlitFramebuffer(vpX, 0, vpX + vpW, frame.fbH, 0, 0, vpW, frame.fbH, GL_DEPTH_BUFFER_BIT,
+                                  GL_NEAREST);
                 glBindFramebuffer(GL_FRAMEBUFFER, 0);
             }
 
-            glViewport(vpX, 0, vpW, frame.fbH);
-            drawMainScene();
+            if (boatProg) {
+                glDisable(GL_BLEND);
+                glDepthMask(GL_TRUE);
+                glUseProgram(boatProg);
+                glUniformMatrix4fv(locBoatMVP, 1, GL_FALSE, glm::value_ptr(mvp));
+                glUniform3fv(locBoatLight, 1, glm::value_ptr(lightDir));
+                const glm::vec3 hullColor(0.78f, 0.44f, 0.2f);
+                glUniform3fv(locBoatColor, 1, glm::value_ptr(hullColor));
+                if (locBoatClipRefl >= 0)
+                    glUniform1i(locBoatClipRefl, 0);
+                glBindVertexArray(boatVao);
+                glBindBuffer(GL_ARRAY_BUFFER, boatVbo);
+                glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(boatVerts.size() * sizeof(float)),
+                                boatVerts.data());
+                glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(boatVerts.size() / 6));
+                glBindVertexArray(0);
+            }
 
             glEnable(GL_BLEND);
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -798,7 +805,7 @@ int main() {
             if (locReflVP >= 0)
                 glUniformMatrix4fv(locReflVP, 1, GL_FALSE, glm::value_ptr(reflVP));
             if (locWaterAlpha >= 0)
-                glUniform1f(locWaterAlpha, 0.84f);
+                glUniform1f(locWaterAlpha, kWaterAlpha);
             if (locDx >= 0)
                 glUniform1f(locDx, kDx);
             if (locHalfW >= 0)
@@ -821,26 +828,29 @@ int main() {
                 glUniform1f(locWaveStrength, kWaterWaveStrength);
             if (locWaterAnimation >= 0)
                 glUniform1f(locWaterAnimation, kWaterAnimationSpeed);
-            if (locZNear >= 0)
-                glUniform1f(locZNear, kProjNear);
-            if (locZFar >= 0)
-                glUniform1f(locZFar, kProjFar);
-            if (locDistortStrength >= 0)
-                glUniform1f(locDistortStrength, kRefractionDistort);
-            if (locIOR >= 0)
-                glUniform1f(locIOR, kWaterIOR);
-            if (locWaterReflMix >= 0)
-                glUniform1f(locWaterReflMix, kWaterReflectionsMix);
-            if (locAbsorptionColor >= 0)
-                glUniform3fv(locAbsorptionColor, 1, glm::value_ptr(kAbsorptionColor));
-            if (locAbsorptionDensityU >= 0)
-                glUniform1f(locAbsorptionDensityU, kAbsorptionDensity);
-            if (locTransparency >= 0)
-                glUniform1f(locTransparency, kRefractionTransparency);
-            if (locEmissionColor >= 0)
-                glUniform3fv(locEmissionColor, 1, glm::value_ptr(kWaterEmission));
-            if (locEmissionStrength >= 0)
-                glUniform1f(locEmissionStrength, kEmissionStrength);
+            if (locViewport >= 0)
+                glUniform4f(locViewport, static_cast<float>(vpX), 0.f, static_cast<float>(vpW),
+                            static_cast<float>(frame.fbH));
+            if (locViewRot >= 0) {
+                const glm::mat3 viewRot(view);
+                glUniformMatrix3fv(locViewRot, 1, GL_FALSE, glm::value_ptr(viewRot));
+            }
+            if (locWaterIOR >= 0)
+                glUniform1f(locWaterIOR, kWaterIOR);
+            if (locRefractParallax >= 0)
+                glUniform1f(locRefractParallax, kWaterRefractionParallax);
+            if (locWaterColor >= 0)
+                glUniform3fv(locWaterColor, 1, glm::value_ptr(kWaterColor));
+            if (locWaterReflections >= 0)
+                glUniform1f(locWaterReflections, kWaterReflections);
+            if (locClipNF >= 0)
+                glUniform2f(locClipNF, kClipNear, kClipFar);
+            if (locDepthAbsorb >= 0)
+                glUniform1f(locDepthAbsorb, kDepthAbsorb);
+            if (locRefractionMaxOffset >= 0)
+                glUniform1f(locRefractionMaxOffset, kRefractionMaxOffset);
+            if (locRefractionLinTol >= 0)
+                glUniform1f(locRefractionLinTol, kRefractionLinTol);
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D, texH);
             if (locTexH >= 0)
@@ -855,18 +865,20 @@ int main() {
                 glUniform1i(locEnvMap, 2);
             if (locEnvMaxMip >= 0)
                 glUniform1f(locEnvMaxMip, envMaxMipF);
+            if (locWaveRough >= 0)
+                glUniform1f(locWaveRough, kEnvWaveRough);
             glActiveTexture(GL_TEXTURE3);
             glBindTexture(GL_TEXTURE_2D, reflColorTex);
             if (locReflTex >= 0)
                 glUniform1i(locReflTex, 3);
             glActiveTexture(GL_TEXTURE4);
-            glBindTexture(GL_TEXTURE_2D, refrColorTex[refrSlot]);
-            if (locRefractionTex >= 0)
-                glUniform1i(locRefractionTex, 4);
+            glBindTexture(GL_TEXTURE_2D, refractColorTex);
+            if (locRefractTex >= 0)
+                glUniform1i(locRefractTex, 4);
             glActiveTexture(GL_TEXTURE5);
-            glBindTexture(GL_TEXTURE_2D, refrDepthTex[refrSlot]);
-            if (locRefractionDepth >= 0)
-                glUniform1i(locRefractionDepth, 5);
+            glBindTexture(GL_TEXTURE_2D, refractDepthTex);
+            if (locSceneDepth >= 0)
+                glUniform1i(locSceneDepth, 5);
             glActiveTexture(GL_TEXTURE0);
 
             glBindVertexArray(vao);
@@ -938,12 +950,11 @@ int main() {
         glDeleteTextures(1, &reflColorTex);
         glDeleteRenderbuffers(1, &reflDepthRbo);
     }
-    for (int ri = 0; ri < 2; ++ri) {
-        if (refrFbo[ri]) {
-            glDeleteFramebuffers(1, &refrFbo[ri]);
-            glDeleteTextures(1, &refrColorTex[ri]);
-            glDeleteTextures(1, &refrDepthTex[ri]);
-        }
+    if (refractColorTex)
+        glDeleteTextures(1, &refractColorTex);
+    if (refractDepthFbo) {
+        glDeleteFramebuffers(1, &refractDepthFbo);
+        glDeleteTextures(1, &refractDepthTex);
     }
     glDeleteBuffers(1, &boatVbo);
     glDeleteVertexArrays(1, &boatVao);

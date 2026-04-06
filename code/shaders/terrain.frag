@@ -2,9 +2,11 @@
 in vec3 vWorldPos;
 in vec2 vIJ;
 uniform sampler2D uB;
+uniform sampler2D uAlbedo;
 uniform float uDx;
 uniform vec3 uLightDir;
 uniform vec3 uCamPos;
+uniform float uAlbedoScale;
 out vec4 FragColor;
 
 void main() {
@@ -30,17 +32,14 @@ void main() {
     vec3 N = normalize(vec3(-dBdx, 1.0, -dBdz));
     vec3 L = normalize(-uLightDir);
     float ndl = max(dot(N, L), 0.0);
-    float b = texelFetch(uB, ivec2(i, j), 0).r;
-    // Tint vs B (generator: sea ~[0,3.9], beach ~[4.1,6], land ~[6,8]).
-    vec3 colDeep = vec3(0.12, 0.14, 0.18);
-    vec3 colSand = vec3(0.72, 0.62, 0.48);
-    vec3 colRock = vec3(0.38, 0.36, 0.34);
-    float tSand = smoothstep(3.2, 4.25, b);
-    float tRock = smoothstep(5.9, 6.5, b);
-    vec3 albedo = mix(colDeep, colSand, tSand);
-    albedo = mix(albedo, colRock, tRock);
+    vec2 uv = vec2(vWorldPos.x, vWorldPos.z) / max(uAlbedoScale, 1e-4);
+    vec3 albedo = texture(uAlbedo, uv).rgb;
     vec3 V = normalize(uCamPos - vWorldPos);
     float spec = pow(max(dot(N, normalize(L + V)), 0.0), 32.0) * 0.12;
-    vec3 rgb = albedo * (0.22 + 0.78 * ndl) + vec3(spec);
+    // 贴图里的“黄沙滩”是偏亮的中性色；乘上过低的 (ambient + diffuse) 会变成暗黄褐。
+    // 略提高环境项 + 半球天空感，避免整片压成棕色。
+    float skyAmt = clamp(N.y * 0.5 + 0.5, 0.0, 1.0);
+    vec3 amb = mix(vec3(0.28, 0.26, 0.24), vec3(0.42, 0.45, 0.48), skyAmt);
+    vec3 rgb = albedo * (amb + vec3(0.55 * ndl)) + vec3(spec);
     FragColor = vec4(rgb, 1.0);
 }

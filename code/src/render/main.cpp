@@ -9,6 +9,7 @@
 #include "render/boat.h"
 #include "render/env_cubemap.h"
 #include "render/shader_file.h"
+#include "render/texture_srgb.h"
 #include "solver_pipeline/shallow_water_solver.h"
 #include "solver_pipeline/wavedecomposer.h"
 #include <cmath>
@@ -21,6 +22,12 @@
 
 #ifndef BP_TOOLS_ROOT
 #define BP_TOOLS_ROOT "."
+#endif
+#ifndef BP_SKYBOX_ROOT
+#define BP_SKYBOX_ROOT "."
+#endif
+#ifndef BP_TERRAIN_MATERIAL_ROOT
+#define BP_TERRAIN_MATERIAL_ROOT "."
 #endif
 
 namespace {
@@ -61,6 +68,8 @@ constexpr float kRefractionMaxOffset = 0.06f;
 constexpr float kRefractionLinTol    = 0.12f;
 constexpr float kEnvWaveRough = 0.14f;
 constexpr bool kRenderTerrainMesh = true;
+// World XZ meters per full repeat of terrain albedo (sand_04_color_1k).
+constexpr float kTerrainAlbedoScale = 14.f;
 
 // Skybox: unit cube, 36 verts, interior view.
 static const float kSkyboxVerts[] = {
@@ -424,6 +433,8 @@ int main() {
     GLint locTerrainHalfW  = terrainProg ? glGetUniformLocation(terrainProg, "uHalfW") : -1;
     GLint locTerrainHalfD  = terrainProg ? glGetUniformLocation(terrainProg, "uHalfD") : -1;
     GLint locTerrainTexB   = terrainProg ? glGetUniformLocation(terrainProg, "uB") : -1;
+    GLint locTerrainAlbedo      = terrainProg ? glGetUniformLocation(terrainProg, "uAlbedo") : -1;
+    GLint locTerrainAlbedoScale = terrainProg ? glGetUniformLocation(terrainProg, "uAlbedoScale") : -1;
 
     GLint locMVP = glGetUniformLocation(prog, "uMVP");
     GLint locLight = glGetUniformLocation(prog, "uLightDir");
@@ -504,6 +515,16 @@ int main() {
     allocGridTextures(kNx, kNy, texH, texB);
     uploadTerrainTexture(g, texB);
 
+    const std::string sandAlbedoPath = std::string(BP_TERRAIN_MATERIAL_ROOT) + "/sand_04_color_1k.png";
+    GLuint            terrainAlbedoTex = loadSrgbTexture2DFromFile(sandAlbedoPath.c_str());
+    if (!terrainAlbedoTex) {
+        terrainAlbedoTex = makeWhiteTexture2D();
+        std::fprintf(stderr, "terrain albedo: could not load %s (using white placeholder)\n",
+                     sandAlbedoPath.c_str());
+    } else {
+        std::printf("terrain albedo: %s\n", sandAlbedoPath.c_str());
+    }
+
     GLuint vao = 0, vbo = 0, ebo = 0;
     glGenVertexArrays(1, &vao);
     glGenBuffers(1, &vbo);
@@ -582,7 +603,7 @@ int main() {
     glm::vec3 lightDir = glm::normalize(glm::vec3(0.35f, 0.85f, 0.4f));
 
     float     envMaxMipF = 0.f;
-    const GLuint envCubemap = makeProceduralEnvCubemap(256, lightDir, &envMaxMipF);
+    const GLuint envCubemap = createEnvCubemap(BP_SKYBOX_ROOT, lightDir, &envMaxMipF);
 
     Boat boat;
     {
@@ -753,6 +774,13 @@ int main() {
                 glBindTexture(GL_TEXTURE_2D, texB);
                 if (locTerrainTexB >= 0)
                     glUniform1i(locTerrainTexB, 0);
+                glActiveTexture(GL_TEXTURE1);
+                glBindTexture(GL_TEXTURE_2D, terrainAlbedoTex);
+                if (locTerrainAlbedo >= 0)
+                    glUniform1i(locTerrainAlbedo, 1);
+                if (locTerrainAlbedoScale >= 0)
+                    glUniform1f(locTerrainAlbedoScale, kTerrainAlbedoScale);
+                glActiveTexture(GL_TEXTURE0);
                 glBindVertexArray(vao);
                 glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(indices.size()), GL_UNSIGNED_INT, nullptr);
                 glBindVertexArray(0);
@@ -944,6 +972,7 @@ int main() {
     glDeleteVertexArrays(1, &skyVao);
     glDeleteTextures(1, &texH);
     glDeleteTextures(1, &texB);
+    glDeleteTextures(1, &terrainAlbedoTex);
     glDeleteTextures(1, &envCubemap);
     if (reflFbo) {
         glDeleteFramebuffers(1, &reflFbo);

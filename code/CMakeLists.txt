@@ -51,6 +51,7 @@ endif()
 target_include_directories(${PROJECT_NAME} PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${CMAKE_CURRENT_SOURCE_DIR}/external/glad/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/external/stb"
 )
 
 find_package(OpenGL REQUIRED)
@@ -119,12 +120,18 @@ target_link_libraries(DiffusionDispersionBench PRIVATE CUDA::cudart)
 
 set(BP_SHADERS_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/shaders")
 string(REPLACE "\\" "/" BP_SHADERS_ROOT "${BP_SHADERS_ROOT}")
+set(BP_SKYBOX_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/external/skybox")
+string(REPLACE "\\" "/" BP_SKYBOX_ROOT "${BP_SKYBOX_ROOT}")
 set(BP_TOOLS_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/tools")
 string(REPLACE "\\" "/" BP_TOOLS_ROOT "${BP_TOOLS_ROOT}")
+set(BP_TERRAIN_MATERIAL_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/external/sand_04_1k")
+string(REPLACE "\\" "/" BP_TERRAIN_MATERIAL_ROOT "${BP_TERRAIN_MATERIAL_ROOT}")
 foreach(_bp_target IN ITEMS ${PROJECT_NAME} DamSWE)
     target_compile_definitions(${_bp_target} PRIVATE "BP_SHADER_ROOT=\"${BP_SHADERS_ROOT}\"")
 endforeach()
+target_compile_definitions(${PROJECT_NAME} PRIVATE "BP_SKYBOX_ROOT=\"${BP_SKYBOX_ROOT}\"")
 target_compile_definitions(${PROJECT_NAME} PRIVATE "BP_TOOLS_ROOT=\"${BP_TOOLS_ROOT}\"")
+target_compile_definitions(${PROJECT_NAME} PRIVATE "BP_TERRAIN_MATERIAL_ROOT=\"${BP_TERRAIN_MATERIAL_ROOT}\"")
 
 if(MSVC)
     foreach(_bp_target IN ITEMS ${PROJECT_NAME} DamSWE DiffusionDispersionBench)

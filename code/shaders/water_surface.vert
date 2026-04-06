@@ -17,6 +17,7 @@ uniform float uTime;
 uniform float uGerstnerWeight;
 out vec3 vWorldPos;
 out float vDepth;
+out vec4 vClipPos;
 
 const float PI = 3.14159265;
 const float G = 9.81;
@@ -98,4 +99,5 @@ void main() {
     vWorldPos = vec3(wx + gDisp.x, y + gDisp.y, wz + gDisp.z);
     vDepth = hAvg;
     gl_Position = uMVP * vec4(vWorldPos, 1.0);
+    vClipPos = gl_Position;
 }

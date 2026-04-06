@@ -1,6 +1,7 @@
 #version 330 core
 in vec3 vWorldPos;
 in float vDepth;
+in vec4 vClipPos;
 uniform vec3 uLightDir;
 uniform vec3 uCameraPos;
 uniform samplerCube uEnvMap;
@@ -18,6 +19,18 @@ uniform float uTime;
 uniform float uWaveScale;
 uniform float uWaveStrength;
 uniform float uWaterAnimation;
+uniform sampler2D uRefractionTex;
+uniform sampler2D uRefractionDepth;
+uniform float uZNear;
+uniform float uZFar;
+uniform float uDistortStrength;
+uniform float uIOR;
+uniform float uWaterReflectionsMix;
+uniform vec3 uAbsorptionColor;
+uniform float uAbsorptionDensity;
+uniform float uTransparency;
+uniform vec3 uEmissionColor;
+uniform float uEmissionStrength;
 out vec4 FragColor;
 
 const float PI = 3.14159265;
@@ -26,8 +39,8 @@ const float kRoughness = 0.045;
 // Air–water interface, normal-incidence reflectance (~IOR 1.33).
 const vec3 kF0 = vec3(0.02);
 // IBL: cubemap mips approximate prefilter; no BRDF LUT (split-sum) — strengths are artistic knobs.
-const float kIBLDiffuseMul = 0.5;
-const float kIBLSpecMul    = 0.55;
+const float kIBLDiffuseMul = 0.62;
+const float kIBLSpecMul    = 0.62;
 // Planar reflection vs cubemap spec: 1 = full replace of IBL spec where valid.
 const float kPlanarReflMix = 0.82;
 
@@ -138,6 +151,11 @@ vec3 waterWavesNormal(vec3 worldPos, vec3 Ngeom, float W) {
     return normalize(Ngeom - uWaveStrength * (gx * Tn + gz * Bn));
 }
 
+float linearizeDepthBuf(float depth) {
+    float z = depth * 2.0 - 1.0;
+    return (2.0 * uZNear * uZFar) / (uZFar + uZNear - z * (uZFar - uZNear));
+}
+
 vec3 hammonDiffuse(vec3 N, vec3 L, vec3 V, vec3 albedo, float roughness) {
     float NoL = clamp(dot(N, L), 0.0, 1.0);
     float NoV = clamp(dot(N, V), 0.0, 1.0);
@@ -186,8 +204,8 @@ void main() {
     float nv = max(dot(N, V), 0.001);
 
     float t = clamp(vDepth / 4.0, 0.0, 1.0);
-    vec3 shallow = vec3(0.28, 0.75, 0.95);
-    vec3 deep = vec3(0.02, 0.14, 0.32);
+    vec3 shallow = vec3(0.38, 0.82, 0.98);
+    vec3 deep = vec3(0.08, 0.24, 0.44);
     vec3 base = mix(deep, shallow, t);
     vec3 sun = vec3(1.0, 0.97, 0.92);
     vec3 diffuse = hammonDiffuse(N, L, V, base, kRoughness) * sun;
@@ -223,6 +241,26 @@ void main() {
     vec3 planar = texture(uReflectionTex, uvR).rgb;
     vec3 iblSpecFinal = mix(iblSpec, planar * kIBLSpecMul, reflOk * kPlanarReflMix);
 
-    vec3 rgb = diffuse + spec + iblDiffuse + iblSpecFinal;
+    // --- Screen-space refraction (Pass 1 color + depth), UV offset by water normal ---
+    vec2 screenUV = vClipPos.xy / vClipPos.w * 0.5 + 0.5;
+    vec2 refractUV = clamp(screenUV + N.xy * uDistortStrength, 0.001, 0.999);
+    vec3 refractionSample = texture(uRefractionTex, refractUV).rgb;
+    float sceneZ = texture(uRefractionDepth, refractUV).r;
+    float waterZ = gl_FragCoord.z;
+    float sceneLin = linearizeDepthBuf(sceneZ);
+    float waterLin = linearizeDepthBuf(waterZ);
+    float column = clamp(max(sceneLin - waterLin, 0.0), 0.0, 40.0);
+    vec3 absorb = exp(-uAbsorptionColor * uAbsorptionDensity * column);
+    vec3 refrTinted = refractionSample * absorb;
+    refrTinted = mix(refrTinted, refractionSample, uTransparency);
+
+    float R0 = pow((1.0 - uIOR) / (1.0 + uIOR), 2.0);
+    float fresnel = R0 + (1.0 - R0) * pow(1.0 - nv, 5.0);
+    fresnel = mix(fresnel, 1.0, uWaterReflectionsMix);
+
+    vec3 reflectionSide = iblDiffuse + iblSpecFinal + spec;
+    vec3 refractionSide = refrTinted + diffuse * 0.42;
+    vec3 rgb = mix(refractionSide, reflectionSide, fresnel);
+    rgb += uEmissionColor * uEmissionStrength;
     FragColor = vec4(rgb, uAlpha);
 }

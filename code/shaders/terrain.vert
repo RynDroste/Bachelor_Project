@@ -4,9 +4,11 @@ uniform mat4 uMVP;
 uniform float uDx;
 uniform float uHalfW;
 uniform float uHalfD;
+uniform float uUvScale;
 uniform sampler2D uB;
 out vec3 vWorldPos;
 out vec2 vIJ;
+out vec2 vUv;
 void main() {
     int vi = int(aCornerIJ.x + 0.0001);
     int vj = int(aCornerIJ.y + 0.0001);
@@ -30,5 +32,6 @@ void main() {
     float wz = float(vj) * uDx - uHalfD;
     vWorldPos = vec3(wx, y, wz);
     vIJ = aCornerIJ;
+    vUv = vec2(wx, wz) * uUvScale;
     gl_Position = uMVP * vec4(vWorldPos, 1.0);
 }

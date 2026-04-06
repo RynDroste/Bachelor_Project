@@ -8,8 +8,8 @@
 #include "solver_pipeline/pipeline.h"
 #include "render/boat.h"
 #include "render/env_cubemap.h"
+#include "render/terrain_material.h"
 #include "render/shader_file.h"
-#include "render/texture_srgb.h"
 #include "solver_pipeline/shallow_water_solver.h"
 #include "solver_pipeline/wavedecomposer.h"
 #include <cmath>
@@ -26,8 +26,8 @@
 #ifndef BP_SKYBOX_ROOT
 #define BP_SKYBOX_ROOT "."
 #endif
-#ifndef BP_TERRAIN_MATERIAL_ROOT
-#define BP_TERRAIN_MATERIAL_ROOT "."
+#ifndef BP_SAND01_ROOT
+#define BP_SAND01_ROOT "."
 #endif
 
 namespace {
@@ -68,8 +68,7 @@ constexpr float kRefractionMaxOffset = 0.06f;
 constexpr float kRefractionLinTol    = 0.12f;
 constexpr float kEnvWaveRough = 0.14f;
 constexpr bool kRenderTerrainMesh = true;
-// World XZ meters per full repeat of terrain albedo (sand_04_color_1k).
-constexpr float kTerrainAlbedoScale = 14.f;
+constexpr float kTerrainMaterialUvScale = 0.035f;
 
 // Skybox: unit cube, 36 verts, interior view.
 static const float kSkyboxVerts[] = {
@@ -381,6 +380,7 @@ int main() {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    glfwWindowHint(GLFW_SRGB_CAPABLE, GLFW_TRUE);
 #ifdef __APPLE__
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
 #endif
@@ -400,6 +400,8 @@ int main() {
         glfwTerminate();
         return 1;
     }
+
+    glEnable(GL_FRAMEBUFFER_SRGB);
 
     FrameCtx frame;
     glfwSetWindowUserPointer(window, &frame);
@@ -433,8 +435,11 @@ int main() {
     GLint locTerrainHalfW  = terrainProg ? glGetUniformLocation(terrainProg, "uHalfW") : -1;
     GLint locTerrainHalfD  = terrainProg ? glGetUniformLocation(terrainProg, "uHalfD") : -1;
     GLint locTerrainTexB   = terrainProg ? glGetUniformLocation(terrainProg, "uB") : -1;
-    GLint locTerrainAlbedo      = terrainProg ? glGetUniformLocation(terrainProg, "uAlbedo") : -1;
-    GLint locTerrainAlbedoScale = terrainProg ? glGetUniformLocation(terrainProg, "uAlbedoScale") : -1;
+    GLint locTerrainUv     = terrainProg ? glGetUniformLocation(terrainProg, "uUvScale") : -1;
+    GLint locTerrainAlbedo = terrainProg ? glGetUniformLocation(terrainProg, "uAlbedo") : -1;
+    GLint locTerrainNrm    = terrainProg ? glGetUniformLocation(terrainProg, "uNormalMap") : -1;
+    GLint locTerrainAO     = terrainProg ? glGetUniformLocation(terrainProg, "uAO") : -1;
+    GLint locTerrainRough  = terrainProg ? glGetUniformLocation(terrainProg, "uRoughness") : -1;
 
     GLint locMVP = glGetUniformLocation(prog, "uMVP");
     GLint locLight = glGetUniformLocation(prog, "uLightDir");
@@ -515,15 +520,8 @@ int main() {
     allocGridTextures(kNx, kNy, texH, texB);
     uploadTerrainTexture(g, texB);
 
-    const std::string sandAlbedoPath = std::string(BP_TERRAIN_MATERIAL_ROOT) + "/sand_04_color_1k.png";
-    GLuint            terrainAlbedoTex = loadSrgbTexture2DFromFile(sandAlbedoPath.c_str());
-    if (!terrainAlbedoTex) {
-        terrainAlbedoTex = makeWhiteTexture2D();
-        std::fprintf(stderr, "terrain albedo: could not load %s (using white placeholder)\n",
-                     sandAlbedoPath.c_str());
-    } else {
-        std::printf("terrain albedo: %s\n", sandAlbedoPath.c_str());
-    }
+    TerrainSand04Textures sandTex{};
+    loadTerrainSand04(BP_SAND01_ROOT, sandTex);
 
     GLuint vao = 0, vbo = 0, ebo = 0;
     glGenVertexArrays(1, &vao);
@@ -770,16 +768,28 @@ int main() {
                     glUniform1f(locTerrainHalfW, halfW);
                 if (locTerrainHalfD >= 0)
                     glUniform1f(locTerrainHalfD, halfD);
+                if (locTerrainUv >= 0)
+                    glUniform1f(locTerrainUv, kTerrainMaterialUvScale);
                 glActiveTexture(GL_TEXTURE0);
                 glBindTexture(GL_TEXTURE_2D, texB);
                 if (locTerrainTexB >= 0)
                     glUniform1i(locTerrainTexB, 0);
                 glActiveTexture(GL_TEXTURE1);
-                glBindTexture(GL_TEXTURE_2D, terrainAlbedoTex);
+                glBindTexture(GL_TEXTURE_2D, sandTex.albedo);
                 if (locTerrainAlbedo >= 0)
                     glUniform1i(locTerrainAlbedo, 1);
-                if (locTerrainAlbedoScale >= 0)
-                    glUniform1f(locTerrainAlbedoScale, kTerrainAlbedoScale);
+                glActiveTexture(GL_TEXTURE2);
+                glBindTexture(GL_TEXTURE_2D, sandTex.normalGl);
+                if (locTerrainNrm >= 0)
+                    glUniform1i(locTerrainNrm, 2);
+                glActiveTexture(GL_TEXTURE3);
+                glBindTexture(GL_TEXTURE_2D, sandTex.ao);
+                if (locTerrainAO >= 0)
+                    glUniform1i(locTerrainAO, 3);
+                glActiveTexture(GL_TEXTURE4);
+                glBindTexture(GL_TEXTURE_2D, sandTex.roughness);
+                if (locTerrainRough >= 0)
+                    glUniform1i(locTerrainRough, 4);
                 glActiveTexture(GL_TEXTURE0);
                 glBindVertexArray(vao);
                 glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(indices.size()), GL_UNSIGNED_INT, nullptr);
@@ -972,7 +982,7 @@ int main() {
     glDeleteVertexArrays(1, &skyVao);
     glDeleteTextures(1, &texH);
     glDeleteTextures(1, &texB);
-    glDeleteTextures(1, &terrainAlbedoTex);
+    destroyTerrainSand04(sandTex);
     glDeleteTextures(1, &envCubemap);
     if (reflFbo) {
         glDeleteFramebuffers(1, &reflFbo);

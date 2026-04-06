@@ -1,12 +1,15 @@
 #version 410 core
 in vec3 vWorldPos;
 in vec2 vIJ;
+in vec2 vUv;
 uniform sampler2D uB;
 uniform sampler2D uAlbedo;
+uniform sampler2D uNormalMap;
+uniform sampler2D uAO;
+uniform sampler2D uRoughness;
 uniform float uDx;
 uniform vec3 uLightDir;
 uniform vec3 uCamPos;
-uniform float uAlbedoScale;
 out vec4 FragColor;
 
 void main() {
@@ -29,17 +32,31 @@ void main() {
     float dBdz = denomZ > 1e-6
         ? (texelFetch(uB, ivec2(i, jp), 0).r - texelFetch(uB, ivec2(i, jm), 0).r) / denomZ
         : 0.0;
-    vec3 N = normalize(vec3(-dBdx, 1.0, -dBdz));
+    vec3 Ng = normalize(vec3(-dBdx, 1.0, -dBdz));
+    vec3 up = abs(Ng.y) < 0.999 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+    vec3 T = normalize(cross(up, Ng));
+    vec3 B = cross(Ng, T);
+    mat3 TBN = mat3(T, B, Ng);
+    vec3 tN = texture(uNormalMap, vUv).rgb * 2.0 - 1.0;
+    vec3 N = normalize(TBN * normalize(tN));
+
+    vec3 albedo = texture(uAlbedo, vUv).rgb;
+    float ao = texture(uAO, vUv).r;
+    float rough = texture(uRoughness, vUv).r;
+
     vec3 L = normalize(-uLightDir);
     float ndl = max(dot(N, L), 0.0);
-    vec2 uv = vec2(vWorldPos.x, vWorldPos.z) / max(uAlbedoScale, 1e-4);
-    vec3 albedo = texture(uAlbedo, uv).rgb;
     vec3 V = normalize(uCamPos - vWorldPos);
-    float spec = pow(max(dot(N, normalize(L + V)), 0.0), 32.0) * 0.12;
-    // 贴图里的“黄沙滩”是偏亮的中性色；乘上过低的 (ambient + diffuse) 会变成暗黄褐。
-    // 略提高环境项 + 半球天空感，避免整片压成棕色。
-    float skyAmt = clamp(N.y * 0.5 + 0.5, 0.0, 1.0);
-    vec3 amb = mix(vec3(0.28, 0.26, 0.24), vec3(0.42, 0.45, 0.48), skyAmt);
-    vec3 rgb = albedo * (amb + vec3(0.55 * ndl)) + vec3(spec);
+    vec3 H = normalize(L + V);
+    float ndh = max(dot(N, H), 0.0);
+    float shininess = mix(96.0, 4.0, rough);
+    float specAmt = (1.0 - rough * 0.92) * 0.22;
+    float spec = pow(ndh, shininess) * specAmt;
+
+    // AO only modulates indirect/ambient; direct sun uses N·L alone (avoids double darkening vs baked albedo).
+    const float kAmb = 0.32;
+    const float kDir = 0.68;
+    float diffuseLight = kAmb * ao + kDir * ndl;
+    vec3 rgb = albedo * diffuseLight + vec3(spec);
     FragColor = vec4(rgb, 1.0);
 }

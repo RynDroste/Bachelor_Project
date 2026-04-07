@@ -1,4 +1,5 @@
 #include "render/env_cubemap.h"
+#include "render/path_join.h"
 
 #include <glad/glad.h>
 
@@ -13,16 +14,6 @@
 
 namespace {
 
-void appendPath(std::string& out, const char* dir, const char* name) {
-    out.assign(dir);
-    if (!out.empty()) {
-        const char c = out.back();
-        if (c != '/' && c != '\\')
-            out.push_back('/');
-    }
-    out += name;
-}
-
 glm::vec3 cubemapDirection(unsigned face, float u, float v) {
     u = u * 2.f - 1.f;
     v = v * 2.f - 1.f;
@@ -30,22 +21,22 @@ glm::vec3 cubemapDirection(unsigned face, float u, float v) {
     switch (face) {
     case 0:
         dir = glm::vec3(1.f, -v, -u);
-        break; // +X
+        break;
     case 1:
         dir = glm::vec3(-1.f, -v, u);
-        break; // -X
+        break;
     case 2:
         dir = glm::vec3(u, 1.f, v);
-        break; // +Y
+        break;
     case 3:
         dir = glm::vec3(u, -1.f, -v);
-        break; // -Y
+        break;
     case 4:
         dir = glm::vec3(u, -v, 1.f);
-        break; // +Z
+        break;
     case 5:
         dir = glm::vec3(-u, -v, -1.f);
-        break; // -Z
+        break;
     default:
         dir = glm::vec3(0.f, 1.f, 0.f);
         break;
@@ -122,7 +113,7 @@ unsigned int tryLoadSkyboxJpegs(const char* skyboxDir, float* outMaxMipLevel) {
 
     std::string path;
     for (unsigned face = 0; face < 6; ++face) {
-        appendPath(path, skyboxDir, kFaceFiles[face]);
+        pathJoin(path, skyboxDir, kFaceFiles[face]);
         int w = 0, h = 0;
         unsigned char* data = stbi_load(path.c_str(), &w, &h, nullptr, 3);
         if (!data || w <= 0 || h <= 0 || w != h) {

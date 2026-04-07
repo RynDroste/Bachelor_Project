@@ -31,7 +31,6 @@ namespace bp_swe_detail {
 
 constexpr float kG         = 9.81f;
 constexpr float kDryEps    = 1e-3f;
-// Momentum clamp: |u| <= dx/(kCflFactor*dt). Also cap so (|u|+sqrt(gh))*dt/dx <= kCflWave.
 constexpr float kCflFactor = 50.f;
 constexpr float kCflWave   = 0.4f;
 
@@ -248,7 +247,6 @@ __global__ void step_h_k(const float* h, const float* qx, const float* qy, float
     h_out[idxH(i, j, nx)] = fmaxf(0.f, h[idxH(i, j, nx)] - dt * divQ);
 }
 
-// After h is updated, q may still imply |q|/h_face larger than the CFL cap (leapfrog mismatch); resync.
 __global__ void clamp_face_qx_k(float* qx, const float* h, int nx, int ny, float dx, float dt) {
     const int i = blockIdx.x * blockDim.x + threadIdx.x;
     const int j = blockIdx.y * blockDim.y + threadIdx.y;

@@ -7,7 +7,6 @@ uniform float uAlpha;
 uniform float uWetDepthEps;
 out vec4 FragColor;
 void main() {
-    // Soft edge: avoid a hard horizontal "void" cut when h or wet corner count is marginal.
     float dFade = smoothstep(0.0, uWetDepthEps * 2.5, max(vDepth, 0.0));
     float wFade = smoothstep(0.10, 0.30, vWetFrac);
     float a = uAlpha * dFade * wFade;

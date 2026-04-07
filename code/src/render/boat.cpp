@@ -13,9 +13,7 @@ namespace {
 constexpr float kDryEps   = 1e-4f;
 constexpr float kMaxSpeed = 8.f;
 constexpr float kTurnGain = 1.2f;
-// Jeschke & Wojtan 2023: disturbances in q each step beneath the boat (tuned for ~1m cells).
 constexpr float kPointQStrength = 180.f;
-// Lateral (cross-track) half-width in grid cells: m from -k..+k, Gaussian weights, sigma = 1 cell.
 constexpr int kLateralHalfWidthCells = 2;
 
 float sampleH(const Grid& g, int i, int j) {
@@ -135,7 +133,6 @@ void applyBoatForcing(Boat& boat, Grid& g, float halfW, float halfD, float dt) {
     const float dirZ = vz / vlen;
     const float dq = kPointQStrength * boat.draft * vlen * dt;
 
-    // Unit perpendicular in the horizontal plane (starboard of velocity).
     const float px = -dirZ;
     const float pz = dirX;
 
@@ -164,7 +161,6 @@ void applyBoatForcing(Boat& boat, Grid& g, float halfW, float halfD, float dt) {
 
         const float dqm = dq * wm;
 
-        // Volumetric flux q along the velocity direction (one face per axis).
         if (dirX >= 0.f) {
             g.QX(i + 1, j) += dqm * dirX;
         } else {

@@ -16,8 +16,6 @@ void main() {
     ivec2 sz = textureSize(uH, 0);
     int NX = sz.x;
     int NY = sz.y;
-    // Weighted blend instead of hv > eps hard split: reduces stair-steps and spikes where
-    // wet/dry toggles cell-by-cell along a wall (purely mesh/shading; solver unchanged).
     float sumSurf = 0.0;
     float sumH = 0.0;
     float sumW = 0.0;
@@ -43,7 +41,6 @@ void main() {
         y = sumSurf / sumW;
         hAvg = sumH / sumW;
     } else {
-        // Fully dry corner: sample nearby bed only so no phantom water sheet appears.
         float sumBed = 0.0;
         int cntBed = 0;
         for (int di = -1; di <= 0; ++di) {

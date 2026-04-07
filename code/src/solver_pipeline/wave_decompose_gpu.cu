@@ -1,5 +1,3 @@
-// GPU wave decomposition (Jeschke & Wojtan-style low-pass / tilde split).
-
 #include "solver_pipeline/wave_decompose_gpu.hpp"
 #include "solver_pipeline/gpu_terrain_h2d_cache.hpp"
 
@@ -165,7 +163,6 @@ int blocks_for(int n, int threads = 256) {
     return (n + threads - 1) / threads;
 }
 
-// Ping-pong diffuse; d_a and d_b must differ. Final field ends in d_dst (copy if needed).
 void wd_run_diffuse(const float* d_src,
                     float* d_dst,
                     float* d_a,

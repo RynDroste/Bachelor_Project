@@ -76,7 +76,6 @@ constexpr float kEnvWaveRough = 0.14f;
 constexpr bool kRenderTerrainMesh = true;
 constexpr float kTerrainMaterialUvScale = 0.035f;
 
-// Skybox: unit cube, 36 verts, interior view.
 static const float kSkyboxVerts[] = {
     -1.f, 1.f,  -1.f, -1.f, -1.f, -1.f, 1.f,  -1.f, -1.f, 1.f,  -1.f, -1.f, 1.f,  1.f,  -1.f, -1.f, 1.f,  -1.f,
     -1.f, -1.f, 1.f,  -1.f, -1.f, -1.f, -1.f, 1.f,  -1.f, -1.f, 1.f,  -1.f, -1.f, 1.f,  1.f,  -1.f, -1.f, 1.f,
@@ -553,8 +552,6 @@ int main() {
     loadTerrainSand04(BP_SAND01_ROOT, sandTex);
 
     GLuint causticTex = loadCausticTexture(BP_CAUSTIC_ROOT "/caustic anim_001.bmp.png");
-    std::fprintf(stderr, "caustic texture ID = %u  (path: %s)\n",
-                 causticTex, BP_CAUSTIC_ROOT "/caustic anim_001.bmp.png");
 
     GLuint vao = 0, vbo = 0, ebo = 0;
     glGenVertexArrays(1, &vao);

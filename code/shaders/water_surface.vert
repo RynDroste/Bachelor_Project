@@ -1,5 +1,4 @@
 #version 410 core
-// Grid corners: blend wet/dry; Gerstner is visual-only (not SWE).
 layout (location = 0) in vec2 aCornerIJ;
 uniform mat4 uMVP;
 uniform float uDx;

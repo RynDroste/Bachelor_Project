@@ -18,7 +18,6 @@ namespace {
 constexpr int kNx = 256;
 constexpr int kNy = 64;
 constexpr float kDx = 1.0f;
-// Slightly conservative vs dx=1 and face CFL cap.
 constexpr float kDt = 1.0f / 120.0f;
 constexpr int kSubsteps = 2;
 constexpr bool kVsync = true;
@@ -34,9 +33,9 @@ constexpr float kWetDepthEps = 1e-2f;
 constexpr bool kUseCenterGap = true;
 constexpr float kG = 9.81f;
 constexpr float kGapRoundnessXCells = 1.2f;
-constexpr int kGapCount = 3;        // first wall
-constexpr int kSecondGapCount = 1;  // second wall: one centered opening
-constexpr int kThirdGapCount = 0;   // third wall: fully closed
+constexpr int kGapCount = 3;
+constexpr int kSecondGapCount = 1;
+constexpr int kThirdGapCount = 0;
 constexpr int kGapSpacingCells = 18;
 
 constexpr float kSecondGapRoundnessXCells = 2.0f;
@@ -132,7 +131,6 @@ void allocGridTextures(int nx, int ny, GLuint& texH, GLuint& texB) {
     glBindTexture(GL_TEXTURE_2D, 0);
 }
 
-// B (bed) is fixed after setupDamInitialState until R resets; h changes every frame.
 void uploadTerrainTexture(const Grid& g, GLuint texB) {
     glBindTexture(GL_TEXTURE_2D, texB);
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, g.NX, g.NY, GL_RED, GL_FLOAT, g.terrain.data());
@@ -166,12 +164,12 @@ void addBox(std::vector<float>& out, float x0, float x1, float y0, float y1, flo
     const glm::vec3 p110(x1, y1, z0);
     const glm::vec3 p111(x1, y1, z1);
 
-    pushQuad(out, p010, p110, p111, p011, glm::vec3(0.f, 1.f, 0.f));   // top
-    pushQuad(out, p000, p001, p101, p100, glm::vec3(0.f, -1.f, 0.f));  // bottom
-    pushQuad(out, p000, p100, p110, p010, glm::vec3(0.f, 0.f, -1.f));  // -z
-    pushQuad(out, p001, p011, p111, p101, glm::vec3(0.f, 0.f, 1.f));   // +z
-    pushQuad(out, p000, p010, p011, p001, glm::vec3(-1.f, 0.f, 0.f));  // -x
-    pushQuad(out, p100, p101, p111, p110, glm::vec3(1.f, 0.f, 0.f));   // +x
+    pushQuad(out, p010, p110, p111, p011, glm::vec3(0.f, 1.f, 0.f));
+    pushQuad(out, p000, p001, p101, p100, glm::vec3(0.f, -1.f, 0.f));
+    pushQuad(out, p000, p100, p110, p010, glm::vec3(0.f, 0.f, -1.f));
+    pushQuad(out, p001, p011, p111, p101, glm::vec3(0.f, 0.f, 1.f));
+    pushQuad(out, p000, p010, p011, p001, glm::vec3(-1.f, 0.f, 0.f));
+    pushQuad(out, p100, p101, p111, p110, glm::vec3(1.f, 0.f, 0.f));
 }
 
 bool isWallSolidCell(int i, int j, int nx, int ny) {
@@ -191,7 +189,6 @@ bool isWallSolidCell(int i, int j, int nx, int ny) {
             return true;
         }
 
-        // Rounded openings: multiple ellipses in (x,z) over cell centers.
         const float cx = 0.5f * static_cast<float>(wallI0 + wallI1 - 1);
         const float rx = std::max(0.75f, wc == 1 ? kSecondGapRoundnessXCells : kGapRoundnessXCells);
         const float rz = std::max(1.0f, wc == 1 ? kSecondGapHalfWidthCells : static_cast<float>(kGapHalfWidthCells));
@@ -480,7 +477,6 @@ int main() {
         glUniform1f(locDx, kDx);
         glUniform1f(locHalfW, halfW);
         glUniform1f(locHalfD, halfD);
-        // Same kWetDepthEps: vertex wet mask; fragment uses 2.5 * uWetDepthEps for depth fade (dam_water.frag).
         glUniform1f(locWetEps, kWetDepthEps);
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, texH);

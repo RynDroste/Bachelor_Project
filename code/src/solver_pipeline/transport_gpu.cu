@@ -183,8 +183,6 @@ __device__ inline float d_sampleHcell(const float* h, int nx, int ny, float fi, 
     return q0 + ty * (q1 - q0);
 }
 
-// -----------------------------------------------------------------------------
-
 __global__ void transport_qx_damp_k(float* qx_tilde, const float* ha, const float* qxa, const float* qya,
                                      const float* hb, const float* qxb, const float* qyb, int nx, int ny,
                                      float dx, float gamma, float dt) {

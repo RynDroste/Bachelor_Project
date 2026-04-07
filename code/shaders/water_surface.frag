@@ -121,7 +121,6 @@ float fbm4Raw(vec4 p) {
 
 vec4 waterWaveCoord(vec3 worldPos, float W) {
     float s = uWaveScale;
-    // Horizontal water: elongate along Z in noise space; fixed third dim avoids Z doubled → repeating pattern.
     return vec4(worldPos.x * s, worldPos.z * 2.0 * s, 0.0, W);
 }
 
@@ -132,7 +131,6 @@ vec3 waterWavesNormal(vec3 worldPos, vec3 Ngeom, float W) {
     vec4 c0 = waterWaveCoord(worldPos, W);
     float h0 = fbm4Raw(c0);
     float hx = fbm4Raw(c0 + vec4(eps, 0.0, 0.0, 0.0));
-    // World Z only enters noise via the 2nd component (z * 2 * s); 3rd is constant.
     float hz = fbm4Raw(c0 + vec4(0.0, eps, 0.0, 0.0));
     float gx = (hx - h0) / eps;
     float gz = (hz - h0) / eps;
@@ -286,7 +284,6 @@ void main() {
 
     vec3 glass = glassBSDF(N, V, screenUV, refractOff, planar, reflOk, gl_FragCoord.z);
 
-    // Shallow-water glow (Blender Emission-style SSS approximation): stronger when thin + at grazing view.
     float shallowMask = 1.0 - clamp(vDepth / 5.0, 0.0, 1.0);
     float edgeMask = pow(1.0 - max(dot(N, V), 0.0), 2.0);
     vec3 emission = uEmissionColor * uEmissionStrength * (0.6 + 0.4 * edgeMask) * shallowMask;

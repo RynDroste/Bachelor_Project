@@ -1,4 +1,5 @@
 #include "render/shader_file.h"
+#include "render/path_join.h"
 
 #include <fstream>
 #include <sstream>
@@ -8,13 +9,9 @@
 #endif
 
 std::string shaderPath(const char* filename) {
-    std::string root(BP_SHADER_ROOT);
-    if (!root.empty()) {
-        const char c = root.back();
-        if (c != '/' && c != '\\')
-            root += '/';
-    }
-    return root + filename;
+    std::string out;
+    pathJoin(out, BP_SHADER_ROOT, filename);
+    return out;
 }
 
 std::string loadTextFile(const std::string& path) {

@@ -7,7 +7,6 @@ struct WaveDecomposition;
 
 void waveDecomposeGpu(const Grid& g, float d_grad_penalty, int n_diffusion_iters, WaveDecomposition& out);
 
-// Device-only decomposition (no D2H). Pointers valid until the next waveDecomposeGpu* call.
 struct WaveDecompGpuPtrs {
     int    nx = 0;
     int    ny = 0;

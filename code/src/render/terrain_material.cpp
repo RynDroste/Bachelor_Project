@@ -1,4 +1,5 @@
 #include "render/terrain_material.h"
+#include "render/path_join.h"
 
 #include <stb_image.h>
 
@@ -7,14 +8,13 @@
 
 namespace {
 
-void pathJoin(std::string& out, const char* dir, const char* file) {
-    out.assign(dir ? dir : "");
-    if (!out.empty()) {
-        const char c = out.back();
-        if (c != '/' && c != '\\')
-            out.push_back('/');
-    }
-    out += file;
+void tex2DRepeatMipFinish() {
+    glGenerateMipmap(GL_TEXTURE_2D);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glBindTexture(GL_TEXTURE_2D, 0);
 }
 
 GLuint makeFallbackR8(unsigned char v) {
@@ -61,12 +61,7 @@ GLuint upload2DRGBA(const char* path, bool srgb, const char* label) {
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     glTexImage2D(GL_TEXTURE_2D, 0, internal, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
     stbi_image_free(data);
-    glGenerateMipmap(GL_TEXTURE_2D);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-    glBindTexture(GL_TEXTURE_2D, 0);
+    tex2DRepeatMipFinish();
     return tex;
 }
 
@@ -85,12 +80,7 @@ GLuint upload2DR8(const char* path, const char* label) {
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, w, h, 0, GL_RED, GL_UNSIGNED_BYTE, data);
     stbi_image_free(data);
-    glGenerateMipmap(GL_TEXTURE_2D);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-    glBindTexture(GL_TEXTURE_2D, 0);
+    tex2DRepeatMipFinish();
     return tex;
 }
 
@@ -124,14 +114,11 @@ bool loadTerrainSand04(const char* dir, TerrainSand04Textures& out) {
 }
 
 void destroyTerrainSand04(TerrainSand04Textures& t) {
-    if (t.albedo)
-        glDeleteTextures(1, &t.albedo);
-    if (t.normalGl)
-        glDeleteTextures(1, &t.normalGl);
-    if (t.ao)
-        glDeleteTextures(1, &t.ao);
-    if (t.roughness)
-        glDeleteTextures(1, &t.roughness);
+    const GLuint ids[] = {t.albedo, t.normalGl, t.ao, t.roughness};
+    for (GLuint id : ids) {
+        if (id)
+            glDeleteTextures(1, &id);
+    }
     t = {};
 }
 

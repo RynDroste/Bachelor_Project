@@ -57,13 +57,11 @@ void main() {
     float specAmt = (1.0 - rough * 0.92) * 0.22;
     float spec = pow(ndh, shininess) * specAmt;
 
-    // AO only modulates indirect/ambient; direct sun uses N·L alone (avoids double darkening vs baked albedo).
     const float kAmb = 0.32;
     const float kDir = 0.68;
     float diffuseLight = kAmb * ao + kDir * ndl;
     vec3 rgb = albedo * diffuseLight + vec3(spec);
 
-    // Caustics: only where water covers the terrain (h > threshold).
     float waterDepth = texelFetch(uH, ivec2(i, j), 0).r;
     if (waterDepth > 0.05) {
         const float kCausticScale = 0.015;
@@ -75,7 +73,6 @@ void main() {
         vec2 cUV1 = cBase + cScroll1;
         vec2 cUV2 = cBase * 1.7 + cScroll2;
 
-        // Chromatic aberration: R/B sample along light azimuth in UV (subtle spectrum fringe).
         vec2 chDir = uLightDir.xz;
         float chLen2 = dot(chDir, chDir);
         chDir = chLen2 > 1e-8 ? chDir * inversesqrt(chLen2) : vec2(1.0, 0.0);

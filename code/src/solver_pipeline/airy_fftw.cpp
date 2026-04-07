@@ -43,12 +43,12 @@ struct AiryEWaveFFTW::Impl {
     cufftComplex*  d_hatQx = nullptr;
     cufftComplex*  d_hatQy = nullptr;
     cufftComplex*  d_work = nullptr;
-    float*         d_spatial = nullptr; // 8 * n: sx0..3, sy0..3
+    float*         d_spatial = nullptr;
     float*         d_h_bar = nullptr;
     float*         d_qxc = nullptr;
     float*         d_qyc = nullptr;
-    float*         d_qx_face = nullptr; // (nx+1)*ny staggered tilde qx
-    float*         d_qy_face = nullptr; // nx*(ny+1) staggered tilde qy
+    float*         d_qx_face = nullptr;
+    float*         d_qy_face = nullptr;
 
     cufftHandle planFwd = 0;
     cufftHandle planInv = 0;

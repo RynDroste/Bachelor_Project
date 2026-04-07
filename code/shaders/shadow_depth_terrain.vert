@@ -1,16 +1,10 @@
 #version 410 core
 layout (location = 0) in vec2 aCornerIJ;
-uniform mat4 uMVP;
 uniform float uDx;
 uniform float uHalfW;
 uniform float uHalfD;
-uniform float uUvScale;
 uniform sampler2D uB;
 uniform mat4 uLightSpace;
-out vec3 vWorldPos;
-out vec2 vIJ;
-out vec2 vUv;
-out vec4 vLightSpacePos;
 void main() {
     int vi = int(aCornerIJ.x + 0.0001);
     int vj = int(aCornerIJ.y + 0.0001);
@@ -32,9 +26,6 @@ void main() {
     float y = cnt > 0 ? sumB / float(cnt) : 0.0;
     float wx = float(vi) * uDx - uHalfW;
     float wz = float(vj) * uDx - uHalfD;
-    vWorldPos = vec3(wx, y, wz);
-    vIJ = aCornerIJ;
-    vUv = vec2(wx, wz) * uUvScale;
-    vLightSpacePos = uLightSpace * vec4(vWorldPos, 1.0);
-    gl_Position = uMVP * vec4(vWorldPos, 1.0);
+    vec3 worldPos = vec3(wx, y, wz);
+    gl_Position = uLightSpace * vec4(worldPos, 1.0);
 }

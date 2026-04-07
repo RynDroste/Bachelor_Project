@@ -60,15 +60,21 @@ constexpr float kWaterIOR                = 1.33f;
 constexpr float kWaterRefractionParallax = 1.0f;
 constexpr float kWaterReflections        = 0.86f;
 constexpr glm::vec3 kWaterColor(0.93f, 0.97f, 1.0f);
+constexpr glm::vec3 kWaterEmissionColor(0.3f, 0.9f, 0.85f);
+constexpr float     kWaterEmissionStrength = 0.12f;
 constexpr float kWaterAlpha              = 0.76f;
 constexpr float kClipNear      = 0.1f;
 constexpr float kClipFar       = 500.f;
-constexpr float kDepthAbsorb   = 0.008f;
+// Chromatic absorption: keep >~0.02 or exp(-k·thick) stays near 1 for typical paths.
+constexpr float kDepthAbsorb   = 0.026f;
+constexpr glm::vec3 kWaterAbsorptionColor(0.3f, 0.85f, 0.9f);
 constexpr float kRefractionMaxOffset = 0.06f;
 constexpr float kRefractionLinTol    = 0.12f;
 constexpr float kEnvWaveRough = 0.14f;
 constexpr bool kRenderTerrainMesh = true;
 constexpr float kTerrainMaterialUvScale = 0.035f;
+constexpr int   kShadowMapSize        = 2048;
+constexpr int   kShadowMapTextureUnit = 6;
 
 // Skybox: unit cube, 36 verts, interior view.
 static const float kSkyboxVerts[] = {
@@ -195,6 +201,51 @@ struct FrameCtx {
     int fbW = 800;
     int fbH = 600;
 };
+
+glm::mat4 computeLightSpaceMatrix(const glm::vec3& lightDirTowardSun, float halfW, float halfD) {
+    const glm::vec3 center(0.f, kEtaRef, 0.f);
+    const float     dist = 220.f;
+    const glm::vec3 L    = glm::normalize(lightDirTowardSun);
+    const glm::vec3 eye  = center + L * dist;
+    const glm::mat4 view = glm::lookAt(eye, center, glm::vec3(0.f, 1.f, 0.f));
+    const float     ext  = fmaxf(halfW, halfD) + 40.f;
+    const glm::mat4 proj = glm::ortho(-ext, ext, -ext, ext, 8.f, 360.f);
+    return proj * view;
+}
+
+void ensureShadowMapFbo(GLuint& fbo, GLuint& depthTex, int& curSize) {
+    if (fbo && curSize == kShadowMapSize)
+        return;
+    if (fbo) {
+        glDeleteFramebuffers(1, &fbo);
+        glDeleteTextures(1, &depthTex);
+        fbo      = 0;
+        depthTex = 0;
+    }
+    curSize = kShadowMapSize;
+    glGenTextures(1, &depthTex);
+    glBindTexture(GL_TEXTURE_2D, depthTex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, kShadowMapSize, kShadowMapSize, 0, GL_DEPTH_COMPONENT,
+                 GL_FLOAT, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+    const float border[] = {1.f, 1.f, 1.f, 1.f};
+    glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, border);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_NONE);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    glGenFramebuffers(1, &fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depthTex, 0);
+    glDrawBuffer(GL_NONE);
+    glReadBuffer(GL_NONE);
+    const GLenum st = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    if (st != GL_FRAMEBUFFER_COMPLETE)
+        std::fprintf(stderr, "shadow FBO incomplete (status 0x%x)\n", static_cast<unsigned>(st));
+}
 
 glm::mat4 reflectionViewAcrossY(float planeY, const glm::vec3& eye, const glm::vec3& target) {
     auto rfl = [planeY](glm::vec3 p) {
@@ -440,6 +491,8 @@ int main() {
     GLint locTerrainNrm    = terrainProg ? glGetUniformLocation(terrainProg, "uNormalMap") : -1;
     GLint locTerrainAO     = terrainProg ? glGetUniformLocation(terrainProg, "uAO") : -1;
     GLint locTerrainRough  = terrainProg ? glGetUniformLocation(terrainProg, "uRoughness") : -1;
+    GLint locTerrainLightSpace = terrainProg ? glGetUniformLocation(terrainProg, "uLightSpace") : -1;
+    GLint locTerrainShadowMap  = terrainProg ? glGetUniformLocation(terrainProg, "uShadowMap") : -1;
 
     GLint locMVP = glGetUniformLocation(prog, "uMVP");
     GLint locLight = glGetUniformLocation(prog, "uLightDir");
@@ -470,11 +523,16 @@ int main() {
     GLint locRefractParallax = glGetUniformLocation(prog, "uTransparency");
     GLint locWaterColor      = glGetUniformLocation(prog, "uWaterColor");
     GLint locWaterReflections = glGetUniformLocation(prog, "uWaterReflections");
+    GLint locEmissionColor   = glGetUniformLocation(prog, "uEmissionColor");
+    GLint locEmissionStrength = glGetUniformLocation(prog, "uEmissionStrength");
     GLint locSceneDepth       = glGetUniformLocation(prog, "uSceneDepth");
     GLint locClipNF           = glGetUniformLocation(prog, "uClipNF");
     GLint locDepthAbsorb      = glGetUniformLocation(prog, "uDepthAbsorb");
+    GLint locAbsorptionColor  = glGetUniformLocation(prog, "uAbsorptionColor");
     GLint locRefractionMaxOffset = glGetUniformLocation(prog, "uRefractionMaxOffset");
     GLint locRefractionLinTol    = glGetUniformLocation(prog, "uRefractionLinTol");
+    GLint locWaterLightSpace     = glGetUniformLocation(prog, "uLightSpace");
+    GLint locWaterShadowMap      = glGetUniformLocation(prog, "uShadowMap");
 
     Grid                      g(kNx, kNy, kDx, kDt);
     std::unique_ptr<Grid>     gCompareSwe;
@@ -552,6 +610,8 @@ int main() {
     GLint locBoatColor = boatProg ? glGetUniformLocation(boatProg, "uBaseColor") : -1;
     GLint locBoatClipRefl = boatProg ? glGetUniformLocation(boatProg, "uClipRefl") : -1;
     GLint locBoatWaterY = boatProg ? glGetUniformLocation(boatProg, "uWaterPlaneY") : -1;
+    GLint locBoatLightSpace = boatProg ? glGetUniformLocation(boatProg, "uLightSpace") : -1;
+    GLint locBoatShadowMap  = boatProg ? glGetUniformLocation(boatProg, "uShadowMap") : -1;
     GLuint boatVao = 0, boatVbo = 0;
     glGenVertexArrays(1, &boatVao);
     glGenBuffers(1, &boatVbo);
@@ -564,6 +624,21 @@ int main() {
                           reinterpret_cast<void*>(3 * sizeof(float)));
     glEnableVertexAttribArray(1);
     glBindVertexArray(0);
+
+    std::string shTrVs = loadTextFile(shaderPath("shadow_depth_terrain.vert"));
+    std::string shBtVs = loadTextFile(shaderPath("shadow_depth_boat.vert"));
+    std::string shDf   = loadTextFile(shaderPath("shadow_depth.frag"));
+    GLuint      shadowTerrainProg =
+        (!shTrVs.empty() && !shDf.empty()) ? makeProgram(shTrVs.c_str(), shDf.c_str()) : 0u;
+    GLuint shadowBoatProg = (!shBtVs.empty() && !shDf.empty()) ? makeProgram(shBtVs.c_str(), shDf.c_str()) : 0u;
+    if (!shadowTerrainProg || !shadowBoatProg)
+        std::fprintf(stderr, "warning: shadow pass shaders missing or failed to compile\n");
+    GLint locShTrLS    = shadowTerrainProg ? glGetUniformLocation(shadowTerrainProg, "uLightSpace") : -1;
+    GLint locShTrDx    = shadowTerrainProg ? glGetUniformLocation(shadowTerrainProg, "uDx") : -1;
+    GLint locShTrHalfW = shadowTerrainProg ? glGetUniformLocation(shadowTerrainProg, "uHalfW") : -1;
+    GLint locShTrHalfD = shadowTerrainProg ? glGetUniformLocation(shadowTerrainProg, "uHalfD") : -1;
+    GLint locShTrB     = shadowTerrainProg ? glGetUniformLocation(shadowTerrainProg, "uB") : -1;
+    GLint locShBoatLS  = shadowBoatProg ? glGetUniformLocation(shadowBoatProg, "uLightSpace") : -1;
 
     std::string skyVs = loadTextFile(shaderPath("skybox.vert"));
     std::string skyFs = loadTextFile(shaderPath("skybox.frag"));
@@ -597,6 +672,8 @@ int main() {
     int    refractBufW = 0, refractBufH = 0;
     GLuint refractDepthFbo = 0, refractDepthTex = 0;
     int    refractDepthBufW = 0, refractDepthBufH = 0;
+    GLuint shadowFbo = 0, shadowDepthTex = 0;
+    int    shadowMapCurSize = 0;
 
     glm::vec3 lightDir = glm::normalize(glm::vec3(0.35f, 0.85f, 0.4f));
 
@@ -678,6 +755,46 @@ int main() {
             uploadWaterDepthTexture(grid, texH);
             fillBoatSolidMesh(boatVerts, boat);
 
+            static glm::mat4 s_lightSpace(1.f);
+            if (vpX == 0 && shadowTerrainProg && shadowBoatProg) {
+                ensureShadowMapFbo(shadowFbo, shadowDepthTex, shadowMapCurSize);
+                s_lightSpace = computeLightSpaceMatrix(lightDir, halfW, halfD);
+                glViewport(0, 0, kShadowMapSize, kShadowMapSize);
+                glBindFramebuffer(GL_FRAMEBUFFER, shadowFbo);
+                glClear(GL_DEPTH_BUFFER_BIT);
+                glEnable(GL_DEPTH_TEST);
+                glDepthMask(GL_TRUE);
+
+                glUseProgram(shadowTerrainProg);
+                if (locShTrLS >= 0)
+                    glUniformMatrix4fv(locShTrLS, 1, GL_FALSE, glm::value_ptr(s_lightSpace));
+                if (locShTrDx >= 0)
+                    glUniform1f(locShTrDx, kDx);
+                if (locShTrHalfW >= 0)
+                    glUniform1f(locShTrHalfW, halfW);
+                if (locShTrHalfD >= 0)
+                    glUniform1f(locShTrHalfD, halfD);
+                glActiveTexture(GL_TEXTURE0);
+                glBindTexture(GL_TEXTURE_2D, texB);
+                if (locShTrB >= 0)
+                    glUniform1i(locShTrB, 0);
+                glBindVertexArray(vao);
+                glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(indices.size()), GL_UNSIGNED_INT, nullptr);
+                glBindVertexArray(0);
+
+                glUseProgram(shadowBoatProg);
+                if (locShBoatLS >= 0)
+                    glUniformMatrix4fv(locShBoatLS, 1, GL_FALSE, glm::value_ptr(s_lightSpace));
+                glBindVertexArray(boatVao);
+                glBindBuffer(GL_ARRAY_BUFFER, boatVbo);
+                glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(boatVerts.size() * sizeof(float)),
+                                boatVerts.data());
+                glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(boatVerts.size() / 6));
+                glBindVertexArray(0);
+
+                glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            }
+
             ensureReflectionFBO(vpW, frame.fbH, reflFbo, reflColorTex, reflDepthRbo, reflBufW, reflBufH);
             if (reflFbo) {
                 glBindFramebuffer(GL_FRAMEBUFFER, reflFbo);
@@ -713,6 +830,15 @@ int main() {
                     glUniform3fv(locBoatLight, 1, glm::value_ptr(lightDir));
                     const glm::vec3 hullColor(0.78f, 0.44f, 0.2f);
                     glUniform3fv(locBoatColor, 1, glm::value_ptr(hullColor));
+                    if (locBoatLightSpace >= 0)
+                        glUniformMatrix4fv(locBoatLightSpace, 1, GL_FALSE, glm::value_ptr(s_lightSpace));
+                    if (shadowDepthTex) {
+                        glActiveTexture(GL_TEXTURE0 + kShadowMapTextureUnit);
+                        glBindTexture(GL_TEXTURE_2D, shadowDepthTex);
+                        if (locBoatShadowMap >= 0)
+                            glUniform1i(locBoatShadowMap, kShadowMapTextureUnit);
+                        glActiveTexture(GL_TEXTURE0);
+                    }
                     if (locBoatClipRefl >= 0)
                         glUniform1i(locBoatClipRefl, 1);
                     if (locBoatWaterY >= 0)
@@ -790,6 +916,14 @@ int main() {
                 glBindTexture(GL_TEXTURE_2D, sandTex.roughness);
                 if (locTerrainRough >= 0)
                     glUniform1i(locTerrainRough, 4);
+                if (locTerrainLightSpace >= 0)
+                    glUniformMatrix4fv(locTerrainLightSpace, 1, GL_FALSE, glm::value_ptr(s_lightSpace));
+                if (shadowDepthTex) {
+                    glActiveTexture(GL_TEXTURE0 + kShadowMapTextureUnit);
+                    glBindTexture(GL_TEXTURE_2D, shadowDepthTex);
+                    if (locTerrainShadowMap >= 0)
+                        glUniform1i(locTerrainShadowMap, kShadowMapTextureUnit);
+                }
                 glActiveTexture(GL_TEXTURE0);
                 glBindVertexArray(vao);
                 glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(indices.size()), GL_UNSIGNED_INT, nullptr);
@@ -820,6 +954,15 @@ int main() {
                 glUniform3fv(locBoatLight, 1, glm::value_ptr(lightDir));
                 const glm::vec3 hullColor(0.78f, 0.44f, 0.2f);
                 glUniform3fv(locBoatColor, 1, glm::value_ptr(hullColor));
+                if (locBoatLightSpace >= 0)
+                    glUniformMatrix4fv(locBoatLightSpace, 1, GL_FALSE, glm::value_ptr(s_lightSpace));
+                if (shadowDepthTex) {
+                    glActiveTexture(GL_TEXTURE0 + kShadowMapTextureUnit);
+                    glBindTexture(GL_TEXTURE_2D, shadowDepthTex);
+                    if (locBoatShadowMap >= 0)
+                        glUniform1i(locBoatShadowMap, kShadowMapTextureUnit);
+                    glActiveTexture(GL_TEXTURE0);
+                }
                 if (locBoatClipRefl >= 0)
                     glUniform1i(locBoatClipRefl, 0);
                 glBindVertexArray(boatVao);
@@ -881,14 +1024,28 @@ int main() {
                 glUniform3fv(locWaterColor, 1, glm::value_ptr(kWaterColor));
             if (locWaterReflections >= 0)
                 glUniform1f(locWaterReflections, kWaterReflections);
+            if (locEmissionColor >= 0)
+                glUniform3fv(locEmissionColor, 1, glm::value_ptr(kWaterEmissionColor));
+            if (locEmissionStrength >= 0)
+                glUniform1f(locEmissionStrength, kWaterEmissionStrength);
             if (locClipNF >= 0)
                 glUniform2f(locClipNF, kClipNear, kClipFar);
             if (locDepthAbsorb >= 0)
                 glUniform1f(locDepthAbsorb, kDepthAbsorb);
+            if (locAbsorptionColor >= 0)
+                glUniform3fv(locAbsorptionColor, 1, glm::value_ptr(kWaterAbsorptionColor));
             if (locRefractionMaxOffset >= 0)
                 glUniform1f(locRefractionMaxOffset, kRefractionMaxOffset);
             if (locRefractionLinTol >= 0)
                 glUniform1f(locRefractionLinTol, kRefractionLinTol);
+            if (locWaterLightSpace >= 0)
+                glUniformMatrix4fv(locWaterLightSpace, 1, GL_FALSE, glm::value_ptr(s_lightSpace));
+            if (shadowDepthTex) {
+                glActiveTexture(GL_TEXTURE0 + kShadowMapTextureUnit);
+                glBindTexture(GL_TEXTURE_2D, shadowDepthTex);
+                if (locWaterShadowMap >= 0)
+                    glUniform1i(locWaterShadowMap, kShadowMapTextureUnit);
+            }
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D, texH);
             if (locTexH >= 0)
@@ -978,6 +1135,14 @@ int main() {
         glDeleteProgram(boatProg);
     if (skyProg)
         glDeleteProgram(skyProg);
+    if (shadowTerrainProg)
+        glDeleteProgram(shadowTerrainProg);
+    if (shadowBoatProg)
+        glDeleteProgram(shadowBoatProg);
+    if (shadowFbo)
+        glDeleteFramebuffers(1, &shadowFbo);
+    if (shadowDepthTex)
+        glDeleteTextures(1, &shadowDepthTex);
     glDeleteBuffers(1, &skyVbo);
     glDeleteVertexArrays(1, &skyVao);
     glDeleteTextures(1, &texH);

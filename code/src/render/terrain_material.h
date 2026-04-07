@@ -13,3 +13,6 @@ struct TerrainSand04Textures {
 bool loadTerrainSand04(const char* dir, TerrainSand04Textures& out);
 
 void destroyTerrainSand04(TerrainSand04Textures& t);
+
+// Loads a single caustic texture (RGBA, repeating, mipmapped). Returns 0 on failure.
+GLuint loadCausticTexture(const char* path);

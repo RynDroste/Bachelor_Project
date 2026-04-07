@@ -134,3 +134,10 @@ void destroyTerrainSand04(TerrainSand04Textures& t) {
         glDeleteTextures(1, &t.roughness);
     t = {};
 }
+
+GLuint loadCausticTexture(const char* path) {
+    GLuint tex = upload2DRGBA(path, false, "caustic");
+    if (!tex)
+        std::fprintf(stderr, "caustic texture not found: %s\n", path);
+    return tex;
+}

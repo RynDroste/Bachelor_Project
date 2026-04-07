@@ -1,7 +1,6 @@
 #version 410 core
 in vec3 vWorldPos;
-in vec4 vLightSpacePos;
-in float vDepth; // average column height H (m); not view path length
+in float vDepth;
 uniform vec3 uLightDir;
 uniform vec3 uCameraPos;
 uniform samplerCube uEnvMap;
@@ -12,7 +11,6 @@ uniform sampler2D uRefractionTex;
 uniform sampler2D uSceneDepth;
 uniform vec2 uClipNF;
 uniform float uDepthAbsorb;
-uniform vec3 uAbsorptionColor;
 uniform vec4 uViewport;
 uniform mat3 uViewRot;
 uniform float uIOR;
@@ -34,7 +32,6 @@ uniform float uWaveStrength;
 uniform float uWaterAnimation;
 uniform vec3 uEmissionColor;
 uniform float uEmissionStrength;
-uniform sampler2D uShadowMap;
 out vec4 FragColor;
 
 const float PI = 3.14159265;
@@ -160,7 +157,7 @@ float linearizeDepth(float z, float near, float far) {
 }
 
 vec3 glassBSDF(vec3 N, vec3 V, vec2 screenUV, vec2 refractOff, vec3 planarReflect, float reflOk,
-               float waterDeviceZ, float waterColumnH) {
+               float waterDeviceZ) {
     float near = uClipNF.x;
     float far = uClipNF.y;
     float linWater = linearizeDepth(waterDeviceZ, near, far);
@@ -176,17 +173,11 @@ vec3 glassBSDF(vec3 N, vec3 V, vec2 screenUV, vec2 refractOff, vec3 planarReflec
 
     vec3 refract = texture(uRefractionTex, refractUV).rgb * uWaterColor;
     float sceneZ = texture(uSceneDepth, refractUV).r;
-    float thickPath = 0.0;
     if (sceneZ < 0.999) {
         float linS = linearizeDepth(sceneZ, near, far);
-        thickPath = clamp(max(0.0, linS - linWater), 0.0, 40.0);
-    } else {
-        // Sky / clear buffer: geometric path undefined; use column height as minimum path proxy.
-        thickPath = clamp(waterColumnH * 2.0, 0.0, 25.0);
+        float thick = clamp(max(0.0, linS - linWater), 0.0, 40.0);
+        refract *= exp(-uDepthAbsorb * thick);
     }
-    // Always apply chromatic absorb so R dies faster than B/G (needs enough uDepthAbsorb × thick).
-    vec3 absorb = exp(-uDepthAbsorb * thickPath * (vec3(1.0) - uAbsorptionColor));
-    refract *= absorb;
 
     vec3 reflectDir = reflect(-V, N);
     float alpha = kRoughness * kRoughness;
@@ -199,24 +190,6 @@ vec3 glassBSDF(vec3 N, vec3 V, vec2 screenUV, vec2 refractOff, vec3 planarReflec
     float edgeBoost = kFresnelEdgeBoost * pow(1.0 - nvSurf, 3.0);
     float reflW = clamp(f * uWaterReflections + edgeBoost, 0.0, 1.0);
     return mix(refract, reflectCombined, reflW);
-}
-
-float shadowPCF(sampler2D map, vec4 fragLS, vec3 N, vec3 Lsurf) {
-    vec3 proj = fragLS.xyz / fragLS.w;
-    proj = proj * 0.5 + 0.5;
-    if (proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0 || proj.z > 1.0)
-        return 1.0;
-    float bias = max(0.001 * (1.0 - dot(N, Lsurf)), 0.0002);
-    float cur = proj.z - bias;
-    float vis = 0.0;
-    vec2 ts = 1.0 / vec2(textureSize(map, 0));
-    for (int j = -1; j <= 1; ++j) {
-        for (int i = -1; i <= 1; ++i) {
-            float d = texture(map, proj.xy + vec2(float(i), float(j)) * ts).r;
-            vis += cur > d ? 0.0 : 1.0;
-        }
-    }
-    return vis / 9.0;
 }
 
 vec3 hammonDiffuse(vec3 N, vec3 L, vec3 V, vec3 albedo, float roughness) {
@@ -260,9 +233,8 @@ void main() {
     float W = uTime * uWaterAnimation;
     N = waterWavesNormal(vWorldPos, N, W);
     vec3 V = normalize(uCameraPos - vWorldPos);
-    vec3 L = normalize(-uLightDir);
+    vec3 L = normalize(uLightDir);
     float nl = max(dot(N, L), 0.0);
-    float sh = shadowPCF(uShadowMap, vLightSpacePos, N, L);
     float nv = max(dot(N, V), 0.001);
 
     float t = clamp(vDepth / 4.0, 0.0, 1.0);
@@ -270,7 +242,7 @@ void main() {
     vec3 deep = vec3(0.02, 0.14, 0.32);
     vec3 base = mix(deep, shallow, t);
     vec3 sun = vec3(1.0, 0.97, 0.92);
-    vec3 diffuse = hammonDiffuse(N, L, V, base, kRoughness) * sun * sh;
+    vec3 diffuse = hammonDiffuse(N, L, V, base, kRoughness) * sun;
 
     vec3 spec = vec3(0.0);
     if (nl > 0.0) {
@@ -282,7 +254,6 @@ void main() {
         spec = (D * G * F) * sun / (4.0 * nv);
         spec *= 1.35;
         spec *= 1.0 + 2.2 * pow(1.0 - nv, 2.5);
-        spec *= sh;
     }
 
     float lodDiff = uEnvMaxMip * 0.88;
@@ -313,7 +284,7 @@ void main() {
         refractOff = (uViewRot * NhN).xy;
     }
 
-    vec3 glass = glassBSDF(N, V, screenUV, refractOff, planar, reflOk, gl_FragCoord.z, vDepth);
+    vec3 glass = glassBSDF(N, V, screenUV, refractOff, planar, reflOk, gl_FragCoord.z);
 
     // Shallow-water glow (Blender Emission-style SSS approximation): stronger when thin + at grazing view.
     float shallowMask = 1.0 - clamp(vDepth / 5.0, 0.0, 1.0);

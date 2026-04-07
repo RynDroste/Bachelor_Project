@@ -2,7 +2,6 @@
 in vec3 vWorldPos;
 in vec2 vIJ;
 in vec2 vUv;
-in vec4 vLightSpacePos;
 uniform sampler2D uB;
 uniform sampler2D uAlbedo;
 uniform sampler2D uNormalMap;
@@ -11,26 +10,11 @@ uniform sampler2D uRoughness;
 uniform float uDx;
 uniform vec3 uLightDir;
 uniform vec3 uCamPos;
-uniform sampler2D uShadowMap;
+uniform sampler2D uH;
+uniform sampler2D uCausticTex;
+uniform float uCausticTime;
+uniform vec2 uCausticWaveOffset;
 out vec4 FragColor;
-
-float shadowPCF(sampler2D map, vec4 fragLS, vec3 N, vec3 Lsurf) {
-    vec3 proj = fragLS.xyz / fragLS.w;
-    proj = proj * 0.5 + 0.5;
-    if (proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0 || proj.z > 1.0)
-        return 1.0;
-    float bias = max(0.0012 * (1.0 - dot(N, Lsurf)), 0.00025);
-    float cur = proj.z - bias;
-    float vis = 0.0;
-    vec2 ts = 1.0 / vec2(textureSize(map, 0));
-    for (int j = -1; j <= 1; ++j) {
-        for (int i = -1; i <= 1; ++i) {
-            float d = texture(map, proj.xy + vec2(float(i), float(j)) * ts).r;
-            vis += cur > d ? 0.0 : 1.0;
-        }
-    }
-    return vis / 9.0;
-}
 
 void main() {
     ivec2 sz = textureSize(uB, 0);
@@ -66,18 +50,53 @@ void main() {
 
     vec3 L = normalize(-uLightDir);
     float ndl = max(dot(N, L), 0.0);
-    float sh = shadowPCF(uShadowMap, vLightSpacePos, N, L);
     vec3 V = normalize(uCamPos - vWorldPos);
     vec3 H = normalize(L + V);
     float ndh = max(dot(N, H), 0.0);
     float shininess = mix(96.0, 4.0, rough);
     float specAmt = (1.0 - rough * 0.92) * 0.22;
-    float spec = pow(ndh, shininess) * specAmt * sh;
+    float spec = pow(ndh, shininess) * specAmt;
 
     // AO only modulates indirect/ambient; direct sun uses N·L alone (avoids double darkening vs baked albedo).
     const float kAmb = 0.32;
     const float kDir = 0.68;
-    float diffuseLight = kAmb * ao + kDir * ndl * sh;
+    float diffuseLight = kAmb * ao + kDir * ndl;
     vec3 rgb = albedo * diffuseLight + vec3(spec);
+
+    // Caustics: only where water covers the terrain (h > threshold).
+    float waterDepth = texelFetch(uH, ivec2(i, j), 0).r;
+    if (waterDepth > 0.05) {
+        const float kCausticScale = 0.015;
+        vec2 lightShift = -uLightDir.xz * waterDepth * 0.18;
+        vec2 xz = vWorldPos.xz + lightShift;
+        vec2 cBase = xz * kCausticScale + uCausticWaveOffset;
+        vec2 cScroll1 = vec2(uCausticTime * 0.025, uCausticTime * 0.018);
+        vec2 cScroll2 = vec2(-uCausticTime * 0.018, uCausticTime * 0.022);
+        vec2 cUV1 = cBase + cScroll1;
+        vec2 cUV2 = cBase * 1.7 + cScroll2;
+
+        // Chromatic aberration: R/B sample along light azimuth in UV (subtle spectrum fringe).
+        vec2 chDir = uLightDir.xz;
+        float chLen2 = dot(chDir, chDir);
+        chDir = chLen2 > 1e-8 ? chDir * inversesqrt(chLen2) : vec2(1.0, 0.0);
+        const float kCausticAber = 0.0018;
+        vec2 ab = chDir * kCausticAber;
+
+        float c1r = texture(uCausticTex, cUV1 + ab).r;
+        float c1g = texture(uCausticTex, cUV1).r;
+        float c1b = texture(uCausticTex, cUV1 - ab).r;
+        float c2r = texture(uCausticTex, cUV2 + ab).r;
+        float c2g = texture(uCausticTex, cUV2).r;
+        float c2b = texture(uCausticTex, cUV2 - ab).r;
+        vec3 raw = vec3(sqrt(c1r * c2r), sqrt(c1g * c2g), sqrt(c1b * c2b));
+        raw = pow(max(raw, vec3(1e-5)), vec3(1.42));
+        raw = clamp(0.5 + (raw - 0.5) * 1.5, 0.0, 1.0);
+        const float kCausticGain     = 2.95;
+        const float kCausticCoverage = 0.7;
+        float depthAtten = clamp(waterDepth / 4.0, 0.0, 1.0);
+        vec3 caustic = raw * kCausticGain * (1.0 - depthAtten) * kCausticCoverage;
+        rgb += caustic * vec3(1.03, 1.0, 0.98);
+    }
+
     FragColor = vec4(rgb, 1.0);
 }

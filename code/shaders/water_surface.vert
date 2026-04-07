@@ -2,7 +2,6 @@
 // Grid corners: blend wet/dry; Gerstner is visual-only (not SWE).
 layout (location = 0) in vec2 aCornerIJ;
 uniform mat4 uMVP;
-uniform mat4 uLightSpace;
 uniform float uDx;
 uniform float uHalfW;
 uniform float uHalfD;
@@ -14,7 +13,6 @@ uniform float uShoreBlendRange;
 uniform float uTime;
 uniform float uGerstnerWeight;
 out vec3 vWorldPos;
-out vec4 vLightSpacePos;
 out float vDepth;
 
 const float PI = 3.14159265;
@@ -93,7 +91,6 @@ void main() {
     }
 
     vWorldPos = vec3(wx + gDisp.x, y + gDisp.y, wz + gDisp.z);
-    vLightSpacePos = uLightSpace * vec4(vWorldPos, 1.0);
     vDepth = hAvg;
     gl_Position = uMVP * vec4(vWorldPos, 1.0);
 }

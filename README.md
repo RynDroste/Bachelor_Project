@@ -76,13 +76,13 @@ $$
 | ✅ | **Advection & stability** | Advect the flow and enforce time-step / wave-speed limits so the simulation stays usable. |
 | ✅ | **Coupled wave pipeline** | Combine the SWE step with a dispersive or spectral correction and transport so scales interact coherently. |
 | ✅ | **Height-field rendering** | Visualize the free surface in real time from simulated depth and bed height. |
-| 🔄 | **Water — lighting** | Define sun/key light and how it hits the surface so all water terms share one coherent setup. |
-| 🔄 | **Water — diffuse** | Lambertian or rough diffuse response from the surface normal so the body of water reads in shade and light. |
-| ⬜ | **Water — specular** | Glossy / specular lobes and Fresnel-aware highlights for sun glints and viewing angle. |
+| ✅ | **Water — lighting** | Define sun/key light and how it hits the surface so all water terms share one coherent setup. |
+| ✅ | **Water — diffuse** | Lambertian or rough diffuse response from the surface normal so the body of water reads in shade and light. |
+| ✅ | **Water — specular** | Glossy / specular lobes and Fresnel-aware highlights for sun glints and viewing angle. |
 | ⬜ | **Water — normal mapping** | Break up large facets with tiled or procedural normal detail on top of the displaced mesh. |
-| ⬜ | **Water — refraction** | Show what is under the surface with chromatic or single-layer refraction of the scene or bed. |
-| ⬜ | **Water — transparency** | Control opacity by depth, wet fraction, and Fresnel so shallow vs deep reads correctly. |
-| ⬜ | **Optional: Water — caustics** | Light focusing patterns underwater or on the bed from a refractive surface. |
+| ✅ | **Water — refraction** | Show what is under the surface with chromatic or single-layer refraction of the scene or bed. |
+| ✅ | **Water — transparency** | Control opacity by depth, wet fraction, and Fresnel so shallow vs deep reads correctly. |
+| ✅ | **Optional: Water — caustics** | Light focusing patterns underwater or on the bed from a refractive surface. |
 | ⬜ | **Optional: Water — foam** | Shoreline and breaking cues: whitecaps, foam masks driven by speed, curl, or depth. |
 | ⬜ | **Optional: Water — flow appearance** | Visualize motion: flow maps, procedural shimmer, or velocity-tinted cues tied to the simulation. |
 | ⬜ | **Water — environment reflection** | Skybox or scene reflections on the water with roughness and Fresnel falloff. |

@@ -13,8 +13,8 @@ namespace {
 constexpr float kDryEps   = 1e-4f;
 constexpr float kMaxSpeed = 8.f;
 constexpr float kTurnGain = 1.2f;
-constexpr float kPointQStrength = 180.f;
-constexpr int kLateralHalfWidthCells = 2;
+constexpr float kPointQStrength = 320.f;
+constexpr int kLateralHalfWidthCells = 4;
 
 float sampleH(const Grid& g, int i, int j) {
     i = std::clamp(i, 0, g.NX - 1);

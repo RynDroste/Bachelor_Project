@@ -73,6 +73,7 @@ constexpr float kDepthAbsorb   = 0.008f;
 constexpr float kRefractionMaxOffset = 0.06f;
 constexpr float kRefractionLinTol    = 0.12f;
 constexpr float kEnvWaveRough = 0.14f;
+constexpr bool kWaterBodyLitOnlyDefault = false;
 constexpr bool kRenderTerrainMesh = true;
 constexpr float kTerrainMaterialUvScale = 0.035f;
 
@@ -471,6 +472,7 @@ int main() {
     GLint locLight = glGetUniformLocation(prog, "uLightDir");
     GLint locCamPos = glGetUniformLocation(prog, "uCameraPos");
     GLint locWaterAlpha = glGetUniformLocation(prog, "uAlpha");
+    GLint locWaterBodyLitOnly = glGetUniformLocation(prog, "uWaterBodyLitOnly");
     GLint locDx = glGetUniformLocation(prog, "uDx");
     GLint locHalfW = glGetUniformLocation(prog, "uHalfW");
     GLint locHalfD = glGetUniformLocation(prog, "uHalfD");
@@ -649,10 +651,21 @@ int main() {
     double fpsPrevT = glfwGetTime();
     float  fpsShown = 0.f;
     double simT     = 0.0;
+    bool   waterBodyLitOnly = kWaterBodyLitOnlyDefault;
+    bool   keyBWasDown        = false;
 
     while (!glfwWindowShouldClose(window)) {
         if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
             glfwSetWindowShouldClose(window, GLFW_TRUE);
+        {
+            const bool keyBDown = glfwGetKey(window, GLFW_KEY_B) == GLFW_PRESS;
+            if (keyBDown && !keyBWasDown) {
+                waterBodyLitOnly = !waterBodyLitOnly;
+                std::printf("water body+spec+emission (no glass): %s\n", waterBodyLitOnly ? "on" : "off");
+                std::fflush(stdout);
+            }
+            keyBWasDown = keyBDown;
+        }
 
         const bool manualControl = true;
         for (int s = 0; s < kSubsteps; ++s) {
@@ -888,6 +901,8 @@ int main() {
                 glUniformMatrix4fv(locReflVP, 1, GL_FALSE, glm::value_ptr(reflVP));
             if (locWaterAlpha >= 0)
                 glUniform1f(locWaterAlpha, kWaterAlpha);
+            if (locWaterBodyLitOnly >= 0)
+                glUniform1i(locWaterBodyLitOnly, waterBodyLitOnly ? 1 : 0);
             if (locDx >= 0)
                 glUniform1f(locDx, kDx);
             if (locHalfW >= 0)

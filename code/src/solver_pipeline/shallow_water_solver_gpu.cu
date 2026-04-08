@@ -31,7 +31,7 @@ namespace bp_swe_detail {
 
 constexpr float kG         = 9.81f;
 constexpr float kDryEps    = 1e-3f;
-constexpr float kCflFactor = 50.f;
+constexpr float kCflFactor = 100.f;
 constexpr float kCflWave   = 0.4f;
 
 __device__ __forceinline__ int idxH(int i, int j, int nx) { return i + j * nx; }
@@ -122,8 +122,8 @@ __global__ void bc_terrain_qy_k(float* qy, const float* h, const float* terrain,
         qy[idxQY(i, j, nx)] = 0.f;
 }
 
-__global__ void step_qx_k(const float* h, const float* qx, const float* qy, float* qx_out, int nx, int ny, float dx,
-                          float dt) {
+__global__ void step_qx_k(const float* h, const float* b, const float* qx, const float* qy, float* qx_out, int nx,
+                          int ny, float dx, float dt) {
     const int i = blockIdx.x * blockDim.x + threadIdx.x;
     const int j = blockIdx.y * blockDim.y + threadIdx.y;
     if (i >= nx + 1 || j >= ny)
@@ -159,11 +159,15 @@ __global__ void step_qx_k(const float* h, const float* qx, const float* qy, floa
         du_dy = (u_u - u) / dx;
     }
 
-    const float hL = h[idxH(max(0, i - 1), j, nx)];
-    const float hR = h[idxH(min(nx - 1, i), j, nx)];
-    float pres = 0.f;
+    const int   il = i - 1;
+    const int   ir = i;
+    const float hL = h[idxH(il, j, nx)];
+    const float hR = h[idxH(ir, j, nx)];
+    const float etaL = b[idxH(il, j, nx)] + hL;
+    const float etaR = b[idxH(ir, j, nx)] + hR;
+    float pres       = 0.f;
     if (hL >= kDryEps && hR >= kDryEps)
-        pres = kG * (hR - hL) / dx;
+        pres = kG * (etaR - etaL) / dx;
 
     const float advection  = (qx_avg / hf) * du_dx + (qy_mid / hf) * du_dy;
     const float qx_current = qx[idxQX(i, j, nx)];
@@ -173,8 +177,8 @@ __global__ void step_qx_k(const float* h, const float* qx, const float* qy, floa
     qx_out[idxQX(i, j, nx)] = qx_next;
 }
 
-__global__ void step_qy_k(const float* h, const float* qx, const float* qy, float* qy_out, int nx, int ny, float dx,
-                          float dt) {
+__global__ void step_qy_k(const float* h, const float* b, const float* qx, const float* qy, float* qy_out, int nx,
+                          int ny, float dx, float dt) {
     const int i = blockIdx.x * blockDim.x + threadIdx.x;
     const int j = blockIdx.y * blockDim.y + threadIdx.y;
     if (i >= nx || j >= ny + 1)
@@ -213,11 +217,15 @@ __global__ void step_qy_k(const float* h, const float* qx, const float* qy, floa
         dv_dy = (v_u - v) / dx;
     }
 
-    const float hD = h[idxH(i, max(0, j - 1), nx)];
-    const float hU = h[idxH(i, min(ny - 1, j), nx)];
-    float pres = 0.f;
+    const int   jd = j - 1;
+    const int   ju = j;
+    const float hD = h[idxH(i, jd, nx)];
+    const float hU = h[idxH(i, ju, nx)];
+    const float etaD = b[idxH(i, jd, nx)] + hD;
+    const float etaU = b[idxH(i, ju, nx)] + hU;
+    float pres         = 0.f;
     if (hD >= kDryEps && hU >= kDryEps)
-        pres = kG * (hU - hD) / dx;
+        pres = kG * (etaU - etaD) / dx;
 
     const float advection  = (qx_mid / hf) * dv_dx + (qy_avg / hf) * dv_dy;
     const float qy_current = qy[idxQY(i, j, nx)];
@@ -402,8 +410,8 @@ void runSweStepKernelsNoSync(int nx, int ny, float dx, float dt) {
     const dim3 gbQy((nx + tb.x - 1) / tb.x, (ny + 1 + tb.y - 1) / tb.y);
     const dim3 gbH((nx + tb.x - 1) / tb.x, (ny + tb.y - 1) / tb.y);
 
-    step_qx_k<<<gbQx, tb>>>(g_swe.d_h, g_swe.d_qx, g_swe.d_qy, g_swe.d_qx_new, nx, ny, dx, dt);
-    step_qy_k<<<gbQy, tb>>>(g_swe.d_h, g_swe.d_qx, g_swe.d_qy, g_swe.d_qy_new, nx, ny, dx, dt);
+    step_qx_k<<<gbQx, tb>>>(g_swe.d_h, g_swe.d_terrain, g_swe.d_qx, g_swe.d_qy, g_swe.d_qx_new, nx, ny, dx, dt);
+    step_qy_k<<<gbQy, tb>>>(g_swe.d_h, g_swe.d_terrain, g_swe.d_qx, g_swe.d_qy, g_swe.d_qy_new, nx, ny, dx, dt);
     SWE_POST_KERNEL();
 
     std::swap(g_swe.d_qx, g_swe.d_qx_new);

@@ -21,10 +21,12 @@ uniform float uRefractionMaxOffset;
 uniform float uRefractionLinTol;
 uniform mat4 uReflViewProj;
 uniform float uAlpha;
+uniform int uWaterBodyLitOnly;
 uniform float uDx;
 uniform float uHalfW;
 uniform float uHalfD;
 uniform sampler2D uH;
+uniform sampler2D uB;
 uniform float uWetDepthEps;
 uniform float uTime;
 uniform float uWaveScale;
@@ -41,7 +43,17 @@ const float kIBLDiffuseMul = 0.38;
 const float kIBLSpecMul    = 0.55;
 const float kPlanarReflMix = 0.82;
 const float kViewBodyMin = 0.05;
+const float kBodyLitMul    = 1.65;
 const float kFresnelEdgeBoost = 0.26;
+// Nonlinear depth: pow < 1 → stronger shallow contrast, deep saturates earlier (typ. 0.3–0.6).
+const float kDepthCurveMax  = 4.0;
+const float kDepthCurvePow  = 0.45;
+const float kShallowAlphaK  = 0.30;
+const float kDeepAlphaK     = 0.95;
+const float kGlassBaseTint  = 0.55;
+// Blend SWE depth-gradient into shading normals so boat wakes read in spec/diffuse (mesh stays unchanged).
+const float kSweHNormalStr = 1.4;
+const float kSweHNormalMix = 0.58;
 
 float distributionGGX(vec3 N, vec3 H, float roughness) {
     float a  = roughness * roughness;
@@ -155,7 +167,7 @@ float linearizeDepth(float z, float near, float far) {
 }
 
 vec3 glassBSDF(vec3 N, vec3 V, vec2 screenUV, vec2 refractOff, vec3 planarReflect, float reflOk,
-               float waterDeviceZ) {
+               float waterDeviceZ, vec3 base) {
     float near = uClipNF.x;
     float far = uClipNF.y;
     float linWater = linearizeDepth(waterDeviceZ, near, far);
@@ -176,6 +188,8 @@ vec3 glassBSDF(vec3 N, vec3 V, vec2 screenUV, vec2 refractOff, vec3 planarReflec
         float thick = clamp(max(0.0, linS - linWater), 0.0, 40.0);
         refract *= exp(-uDepthAbsorb * thick);
     }
+
+    refract *= mix(vec3(1.0), base, kGlassBaseTint);
 
     vec3 reflectDir = reflect(-V, N);
     float alpha = kRoughness * kRoughness;
@@ -225,20 +239,37 @@ void main() {
     if (max(hCell, 0.0) < uWetDepthEps)
         discard;
 
+    float bTerrain = texture(uB, uv).r;
+    float surfaceToBed = max(vWorldPos.y - bTerrain, 0.0);
+    float depthNorm = clamp(surfaceToBed / kDepthCurveMax, 0.0, 1.0);
+    float depthFactor = pow(depthNorm, kDepthCurvePow);
+    vec3 shallow = vec3(0.28, 0.75, 0.95);
+    vec3 deep = vec3(0.02, 0.08, 0.32);
+    vec3 base = mix(shallow, deep, depthFactor);
+    float waterAlpha = clamp(mix(kShallowAlphaK, kDeepAlphaK, depthFactor) * uAlpha, 0.0, 1.0);
+
     vec3 nx = dFdx(vWorldPos);
     vec3 ny = dFdy(vWorldPos);
     vec3 N = normalize(cross(nx, ny));
     float W = uTime * uWaterAnimation;
     N = waterWavesNormal(vWorldPos, N, W);
+    {
+        float cellDu = 1.0 / float(sz.x);
+        float cellDv = 1.0 / float(sz.y);
+        vec2 uxp = clamp(uv + vec2(cellDu, 0.0), vec2(0.001), vec2(0.999));
+        vec2 uxm = clamp(uv - vec2(cellDu, 0.0), vec2(0.001), vec2(0.999));
+        vec2 uyp = clamp(uv + vec2(0.0, cellDv), vec2(0.001), vec2(0.999));
+        vec2 uym = clamp(uv - vec2(0.0, cellDv), vec2(0.001), vec2(0.999));
+        float dhdx = (texture(uH, uxp).r - texture(uH, uxm).r) / (2.0 * uDx);
+        float dhdz = (texture(uH, uyp).r - texture(uH, uym).r) / (2.0 * uDx);
+        vec3 Nswe = normalize(vec3(-dhdx * kSweHNormalStr, 1.0, -dhdz * kSweHNormalStr));
+        N = normalize(mix(N, Nswe, kSweHNormalMix));
+    }
     vec3 V = normalize(uCameraPos - vWorldPos);
     vec3 L = normalize(uLightDir);
     float nl = max(dot(N, L), 0.0);
     float nv = max(dot(N, V), 0.001);
 
-    float t = clamp(vDepth / 4.0, 0.0, 1.0);
-    vec3 shallow = vec3(0.28, 0.75, 0.95);
-    vec3 deep = vec3(0.02, 0.14, 0.32);
-    vec3 base = mix(deep, shallow, t);
     vec3 sun = vec3(1.0, 0.97, 0.92);
     vec3 diffuse = hammonDiffuse(N, L, V, base, kRoughness) * sun;
 
@@ -263,6 +294,16 @@ void main() {
     float viewBody = 4.0 * nv * (1.0 - nv);
     viewBody = clamp(viewBody, 0.0, 1.0);
     vec3 bodyLit = (diffuse + iblDiffuse) * mix(kViewBodyMin, 1.0, viewBody);
+    bodyLit *= kBodyLitMul;
+
+    float shallowMask = 1.0 - clamp(vDepth / 5.0, 0.0, 1.0);
+    float edgeMask = pow(1.0 - max(dot(N, V), 0.0), 2.0);
+    vec3 emission = uEmissionColor * uEmissionStrength * (0.6 + 0.4 * edgeMask) * shallowMask;
+
+    if (uWaterBodyLitOnly != 0) {
+        FragColor = vec4(bodyLit + spec + emission, waterAlpha);
+        return;
+    }
 
     vec4 clipR = uReflViewProj * vec4(vWorldPos, 1.0);
     float rw = clipR.w;
@@ -282,13 +323,9 @@ void main() {
         refractOff = (uViewRot * NhN).xy;
     }
 
-    vec3 glass = glassBSDF(N, V, screenUV, refractOff, planar, reflOk, gl_FragCoord.z);
-
-    float shallowMask = 1.0 - clamp(vDepth / 5.0, 0.0, 1.0);
-    float edgeMask = pow(1.0 - max(dot(N, V), 0.0), 2.0);
-    vec3 emission = uEmissionColor * uEmissionStrength * (0.6 + 0.4 * edgeMask) * shallowMask;
+    vec3 glass = glassBSDF(N, V, screenUV, refractOff, planar, reflOk, gl_FragCoord.z, base);
 
     vec3 rgb = bodyLit + spec + glass + emission;
 
-    FragColor = vec4(rgb, uAlpha);
+    FragColor = vec4(rgb, waterAlpha);
 }

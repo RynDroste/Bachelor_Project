@@ -16,7 +16,10 @@ file(GLOB_RECURSE APP_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp"
 )
 
-list(REMOVE_ITEM APP_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/render/dam.cpp")
+list(REMOVE_ITEM APP_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/render/dam.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/solver_pipeline/transport.cpp"
+)
 
 if(NOT APP_SOURCES)
     message(FATAL_ERROR "No .cpp sources under ${CMAKE_CURRENT_SOURCE_DIR}/src")

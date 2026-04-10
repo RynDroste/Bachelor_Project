@@ -1,6 +1,7 @@
 #version 410 core
 in vec3 vWorldPos;
 in float vDepth;
+in float vGerstnerPeak;
 uniform vec3 uLightDir;
 uniform vec3 uCameraPos;
 uniform samplerCube uEnvMap;
@@ -270,6 +271,17 @@ void main() {
     float nl = max(dot(N, L), 0.0);
     float nv = max(dot(N, V), 0.001);
 
+    // --- Subsurface scatter: water_color = lerp(deep_water_color, subsurface_water_color, scatter_weight) ---
+    // Factor 1 (view angle):  top-down view = shorter light path through water = more subsurface
+    float sss_view = nv;
+    // Factor 2 (sun direction): forward scatter — sun behind wave crest, light punches through thin water
+    float sss_sun  = 0.5 + 0.5 * pow(max(dot(-L, V), 0.0), 2.0);
+    // Factor 3 (wave peak mask): SWE shallow depth OR Gerstner crest — both mean short light path
+    float sss_peak = pow(max(1.0 - depthFactor, vGerstnerPeak), 0.5);
+    float scatter_weight = clamp(sss_view * sss_sun * sss_peak, 0.0, 1.0);
+    vec3 sss_color = mix(deep, vec3(0.18, 0.82, 0.60), scatter_weight);
+    vec3 sss       = sss_color * scatter_weight * 0.55;
+
     vec3 sun = vec3(1.0, 0.97, 0.92);
     vec3 diffuse = hammonDiffuse(N, L, V, base, kRoughness) * sun;
 
@@ -301,7 +313,7 @@ void main() {
     vec3 emission = uEmissionColor * uEmissionStrength * (0.6 + 0.4 * edgeMask) * shallowMask;
 
     if (uWaterBodyLitOnly != 0) {
-        FragColor = vec4(bodyLit + spec + emission, waterAlpha);
+        FragColor = vec4(bodyLit + spec + emission + sss, waterAlpha);
         return;
     }
 
@@ -325,7 +337,7 @@ void main() {
 
     vec3 glass = glassBSDF(N, V, screenUV, refractOff, planar, reflOk, gl_FragCoord.z, base);
 
-    vec3 rgb = bodyLit + spec + glass + emission;
+    vec3 rgb = bodyLit + spec + glass + emission + sss;
 
     FragColor = vec4(rgb, waterAlpha);
 }

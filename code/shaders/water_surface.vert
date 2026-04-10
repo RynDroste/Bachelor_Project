@@ -13,6 +13,7 @@ uniform float uTime;
 uniform float uGerstnerWeight;
 out vec3 vWorldPos;
 out float vDepth;
+out float vGerstnerPeak;
 
 const float PI = 3.14159265;
 const float G = 9.81;
@@ -88,6 +89,8 @@ void main() {
         gerstnerAdd(xz, uTime * 0.93, normalize(vec2(0.2, 1.0)), 9.0, 0.018, 0.38, gDisp);
         gDisp *= gMask;
     }
+    // Factor 3 wave peak mask: Gerstner horizontal displacement magnitude (analogous to FFT choppiness)
+    vGerstnerPeak = clamp(length(gDisp.xz) * 8.0, 0.0, 1.0);
 
     vWorldPos = vec3(wx + gDisp.x, y + gDisp.y, wz + gDisp.z);
     vDepth = hAvg;

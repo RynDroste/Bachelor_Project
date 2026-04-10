@@ -64,14 +64,14 @@ void main() {
 
     float waterDepth = texelFetch(uH, ivec2(i, j), 0).r;
     if (waterDepth > 0.05) {
-        const float kCausticScale = 0.015;
+        const float kCausticScale = 0.010;
         vec2 lightShift = -uLightDir.xz * waterDepth * 0.18;
         vec2 xz = vWorldPos.xz + lightShift;
         vec2 cBase = xz * kCausticScale + uCausticWaveOffset;
         vec2 cScroll1 = vec2(uCausticTime * 0.025, uCausticTime * 0.018);
         vec2 cScroll2 = vec2(-uCausticTime * 0.018, uCausticTime * 0.022);
         vec2 cUV1 = cBase + cScroll1;
-        vec2 cUV2 = cBase * 1.7 + cScroll2;
+        vec2 cUV2 = cBase * 1.45 + cScroll2;
 
         vec2 chDir = uLightDir.xz;
         float chLen2 = dot(chDir, chDir);
@@ -86,10 +86,10 @@ void main() {
         float c2g = texture(uCausticTex, cUV2).r;
         float c2b = texture(uCausticTex, cUV2 - ab).r;
         vec3 raw = vec3(sqrt(c1r * c2r), sqrt(c1g * c2g), sqrt(c1b * c2b));
-        raw = pow(max(raw, vec3(1e-5)), vec3(1.42));
-        raw = clamp(0.5 + (raw - 0.5) * 1.5, 0.0, 1.0);
+        raw = pow(max(raw, vec3(1e-5)), vec3(1.65));
+        raw = clamp(0.5 + (raw - 0.5) * 1.35, 0.0, 1.0);
         const float kCausticGain     = 2.95;
-        const float kCausticCoverage = 0.7;
+        const float kCausticCoverage = 0.52;
         float depthAtten = clamp(waterDepth / 4.0, 0.0, 1.0);
         vec3 caustic = raw * kCausticGain * (1.0 - depthAtten) * kCausticCoverage;
         rgb += caustic * vec3(1.03, 1.0, 0.98);

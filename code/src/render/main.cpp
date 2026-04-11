@@ -1,5 +1,8 @@
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
+#include "imgui.h"
+#include "imgui_impl_glfw.h"
+#include "imgui_impl_opengl3.h"
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -7,6 +10,7 @@
 #include "solver_pipeline/airy_fftw.h"
 #include "solver_pipeline/pipeline.h"
 #include "render/boat.h"
+#include "render/scene_camera.h"
 #include "render/env_cubemap.h"
 #include "render/terrain_material.h"
 #include "render/shader_file.h"
@@ -39,8 +43,8 @@ namespace {
 constexpr int   kNx = 256;
 constexpr int   kNy = 256;
 constexpr float kDx = 1.0f;
+// Nominal/max internal timestep for SWE kernels (subdivide wall-clock frame into steps <= this).
 constexpr float kDt = 1.0f / 120.0f;
-constexpr int   kSubsteps = 2;
 constexpr bool  kCoupledStep = true;
 constexpr bool  kSplitCompareSwe = false;
 constexpr float kGradPenaltyD = 0.25f;
@@ -395,6 +399,31 @@ static glm::vec2 causticWaveUvOffsetFromWater(const Grid& g, int ci, int cj) {
     return glm::vec2(N.x, N.z) * kNormalToUv;
 }
 
+// Rolling average of frame deltas (SimShip-style smoothing; shorter window than Ship.cpp's 500).
+float smoothFrameDtAverage(float newVal) {
+    static constexpr int   kRing  = 128;
+    static constexpr int   kWarmup = 12;
+    static float           ring[kRing]{};
+    static int             idx     = 0;
+    static int             filled  = 0;
+    static float           sum     = 0.f;
+    static int             calls   = 0;
+    ++calls;
+    if (calls <= kWarmup)
+        return newVal;
+    if (filled < kRing) {
+        ring[filled] = newVal;
+        sum += newVal;
+        ++filled;
+        return sum / static_cast<float>(filled);
+    }
+    sum -= ring[idx];
+    ring[idx] = newVal;
+    sum += newVal;
+    idx = (idx + 1) % kRing;
+    return sum / static_cast<float>(kRing);
+}
+
 int main() {
     if (!glfwInit()) {
         std::fprintf(stderr, "glfwInit failed\n");
@@ -430,6 +459,16 @@ int main() {
     glfwSetWindowUserPointer(window, &frame);
     glfwSetFramebufferSizeCallback(window, framebufferSizeCB);
     glfwGetFramebufferSize(window, &frame.fbW, &frame.fbH);
+
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGui::StyleColorsDark();
+    {
+        ImGuiIO& io = ImGui::GetIO();
+        io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    }
+    ImGui_ImplGlfw_InitForOpenGL(window, true);
+    ImGui_ImplOpenGL3_Init("#version 410 core");
 
     std::string waterVs = loadTextFile(shaderPath("water_surface.vert"));
     std::string waterFs = loadTextFile(shaderPath("water_surface.frag"));
@@ -648,73 +687,134 @@ int main() {
     std::vector<float> boatVerts;
     boatVerts.reserve(256);
 
+    SceneCamera sceneCam;
+    sceneCam.resetOrbitalFromEye(kFixedCamEye, boat);
+
     double fpsPrevT = glfwGetTime();
-    float  fpsShown = 0.f;
-    double simT     = 0.0;
+    double wallPrev = fpsPrevT;
+    float  fpsShown  = 0.f;
+    double simT      = 0.0;
     bool   waterBodyLitOnly = kWaterBodyLitOnlyDefault;
-    bool   keyBWasDown        = false;
+    bool   keyBWasDown      = false;
+    bool   key1WasDown      = false;
+    bool   key2WasDown      = false;
+    bool   key3WasDown      = false;
 
     while (!glfwWindowShouldClose(window)) {
-        if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
-            glfwSetWindowShouldClose(window, GLFW_TRUE);
-        {
-            const bool keyBDown = glfwGetKey(window, GLFW_KEY_B) == GLFW_PRESS;
-            if (keyBDown && !keyBWasDown) {
+        glfwPollEvents();
+
+        const double nowWall = glfwGetTime();
+        float        rawFrame = static_cast<float>(nowWall - wallPrev);
+        wallPrev              = nowWall;
+        if (rawFrame < 1e-5f)
+            rawFrame = kDt;
+        rawFrame = glm::clamp(rawFrame, 1e-4f, 0.15f);
+        const float frameDt    = rawFrame;
+        const float simFrameDt = smoothFrameDtAverage(rawFrame);
+
+        ImGui_ImplOpenGL3_NewFrame();
+        ImGui_ImplGlfw_NewFrame();
+        ImGui::NewFrame();
+
+        ImGuiIO& imguiIo = ImGui::GetIO();
+
+        if (!imguiIo.WantCaptureKeyboard) {
+            const bool bDown = glfwGetKey(window, GLFW_KEY_B) == GLFW_PRESS;
+            if (bDown && !keyBWasDown) {
                 waterBodyLitOnly = !waterBodyLitOnly;
                 std::printf("water body+spec+emission (no glass): %s\n", waterBodyLitOnly ? "on" : "off");
                 std::fflush(stdout);
             }
-            keyBWasDown = keyBDown;
+            keyBWasDown = bDown;
+
+            auto edge = [&](int key, bool& was) {
+                const bool d = glfwGetKey(window, key) == GLFW_PRESS;
+                const bool e = d && !was;
+                was            = d;
+                return e;
+            };
+            if (edge(GLFW_KEY_1, key1WasDown))
+                sceneCam.setMode(SceneCamMode::Orbital, boat);
+            if (edge(GLFW_KEY_2, key2WasDown))
+                sceneCam.setMode(SceneCamMode::Bridge, boat);
+            if (edge(GLFW_KEY_3, key3WasDown))
+                sceneCam.setMode(SceneCamMode::Fps, boat);
+        } else {
+            keyBWasDown = glfwGetKey(window, GLFW_KEY_B) == GLFW_PRESS;
+            key1WasDown = glfwGetKey(window, GLFW_KEY_1) == GLFW_PRESS;
+            key2WasDown = glfwGetKey(window, GLFW_KEY_2) == GLFW_PRESS;
+            key3WasDown = glfwGetKey(window, GLFW_KEY_3) == GLFW_PRESS;
         }
 
-        const bool manualControl = true;
-        for (int s = 0; s < kSubsteps; ++s) {
-            updateBoat(boat, g, window, halfW, halfD, g.dt, manualControl);
-            applyBoatForcing(boat, g, halfW, halfD, g.dt);
-            if (kSplitCompareSwe) {
-                applyBoatForcing(boat, *gCompareSwe, halfW, halfD, gCompareSwe->dt);
+        ImGui::Begin("Debug");
+        if (ImGui::RadioButton("1 · Orbital (LMB orbit, wheel zoom)", sceneCam.mode == SceneCamMode::Orbital))
+            sceneCam.setMode(SceneCamMode::Orbital, boat);
+        if (ImGui::RadioButton("2 · Bridge (on boat, LMB look)", sceneCam.mode == SceneCamMode::Bridge))
+            sceneCam.setMode(SceneCamMode::Bridge, boat);
+        if (ImGui::RadioButton("3 · Fly cam (WASD+E/Q; boat: arrow keys)", sceneCam.mode == SceneCamMode::Fps))
+            sceneCam.setMode(SceneCamMode::Fps, boat);
+        ImGui::Separator();
+        ImGui::Checkbox("Water body lit only (or B)", &waterBodyLitOnly);
+        ImGui::Text("FPS (smoothed): %.0f", static_cast<double>(fpsShown));
+        ImGui::Text("Sim time: %.2f s", static_cast<double>(simT));
+        ImGui::Text("Wall dt (frame): %.4f s | smoothed (sim): %.4f s", static_cast<double>(rawFrame),
+                    static_cast<double>(simFrameDt));
+        ImGui::Separator();
+        ImGui::TextUnformatted("ImGui blocks camera / boat keys when interacting with UI.");
+        ImGui::End();
+
+        const bool capMouse = imguiIo.WantCaptureMouse;
+        const bool capKb    = imguiIo.WantCaptureKeyboard;
+        sceneCam.update(window, frameDt, boat, capMouse, capKb, imguiIo.MouseWheel);
+
+        if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
+            glfwSetWindowShouldClose(window, GLFW_TRUE);
+
+        const bool keyboardBoat = !capKb;
+        const bool boatUseArrows = sceneCam.mode == SceneCamMode::Fps;
+
+        const float savedDt = g.dt;
+        float       savedCompareDt = 0.f;
+        if (gCompareSwe)
+            savedCompareDt = gCompareSwe->dt;
+
+        float remaining = simFrameDt;
+        while (remaining > 1e-6f) {
+            const float step = std::min(remaining, kDt);
+            g.dt             = step;
+            if (gCompareSwe)
+                gCompareSwe->dt = step;
+
+            updateBoat(boat, g, window, halfW, halfD, step, keyboardBoat, boatUseArrows);
+            applyBoatForcing(boat, g, halfW, halfD, step);
+            if (kSplitCompareSwe && gCompareSwe) {
+                applyBoatForcing(boat, *gCompareSwe, halfW, halfD, step);
                 coupledSubstep(g, halfW, halfD, waveDec, *airy, hTildeSym, hTildePrevHalf, haveHtildePrevHalf,
-                                 kGradPenaltyD, 0.25f, kWaveDiffuseIters);
+                               kGradPenaltyD, 0.25f, kWaveDiffuseIters);
                 sweStepGpu(*gCompareSwe);
             } else if (kCoupledStep) {
                 coupledSubstep(g, halfW, halfD, waveDec, *airy, hTildeSym, hTildePrevHalf, haveHtildePrevHalf,
-                                 kGradPenaltyD, 0.25f, kWaveDiffuseIters);
+                               kGradPenaltyD, 0.25f, kWaveDiffuseIters);
             } else {
                 sweStepGpu(g);
             }
-        }
-        simT += kSubsteps * g.dt;
-
-        static double lastFroudePrintSimT = -1e9;
-        constexpr double kFroudePrintInterval = 0.25;
-        if (simT - lastFroudePrintSimT >= kFroudePrintInterval) {
-            lastFroudePrintSimT = simT;
-            if (kSplitCompareSwe && gCompareSwe) {
-                const ShallowWaterDiagnostics dCoupled = gridShallowWaterDiagnostics(g, 9.81f);
-                const ShallowWaterDiagnostics dSwe    = gridShallowWaterDiagnostics(*gCompareSwe, 9.81f);
-                std::printf(
-                    "t=%.3f s  coupled Fr_max=%.4f  |u|_max=%.4f  h_min_wet=%.4f m  |  SWE Fr_max=%.4f  "
-                    "|u|_max=%.4f  h_min_wet=%.4f m\n",
-                    simT, static_cast<double>(dCoupled.fr_max), static_cast<double>(dCoupled.speed_max),
-                    static_cast<double>(dCoupled.h_min_wet), static_cast<double>(dSwe.fr_max),
-                    static_cast<double>(dSwe.speed_max), static_cast<double>(dSwe.h_min_wet));
-            } else {
-                const ShallowWaterDiagnostics diag = gridShallowWaterDiagnostics(g, 9.81f);
-                std::printf(
-                    "t=%.3f s  Fr_max=%.4f  |u|@Frmax=%.4f m/s  h@Frmax=%.4f m  |u|_max=%.4f  h_min_wet=%.4f m\n",
-                    simT, static_cast<double>(diag.fr_max), static_cast<double>(diag.speed_at_fr_max),
-                    static_cast<double>(diag.h_at_fr_max), static_cast<double>(diag.speed_max),
-                    static_cast<double>(diag.h_min_wet));
-            }
-            std::fflush(stdout);
+            remaining -= step;
         }
 
-        glm::mat4 view =
-            glm::lookAt(kFixedCamEye, kFixedCamTarget, glm::vec3(0.f, 1.f, 0.f));
+        g.dt = savedDt;
+        if (gCompareSwe)
+            gCompareSwe->dt = savedCompareDt;
+
+        simT += static_cast<double>(simFrameDt);
+
+        const glm::vec3 camEye    = sceneCam.eye();
+        const glm::vec3 camTarget = sceneCam.target();
+        const glm::mat4 view =
+            glm::lookAt(camEye, camTarget, glm::vec3(0.f, 1.f, 0.f));
 
         auto drawPane = [&](int vpX, int vpW, const Grid& grid, float aspect) {
             glm::mat4 proj      = glm::perspective(glm::radians(kCamFovDeg), aspect, 0.1f, 500.f);
-            glm::mat4 viewRefl  = reflectionViewAcrossY(kReflectPlaneY, kFixedCamEye, kFixedCamTarget);
+            glm::mat4 viewRefl  = reflectionViewAcrossY(kReflectPlaneY, camEye, camTarget);
             glm::mat4 reflVP    = proj * viewRefl;
             glm::mat4 mvp       = proj * view;
 
@@ -804,7 +904,7 @@ int main() {
                 if (locTerrainLight >= 0)
                     glUniform3fv(locTerrainLight, 1, glm::value_ptr(lightDir));
                 if (locTerrainCam >= 0)
-                    glUniform3fv(locTerrainCam, 1, glm::value_ptr(kFixedCamEye));
+                    glUniform3fv(locTerrainCam, 1, glm::value_ptr(camEye));
                 if (locTerrainDx >= 0)
                     glUniform1f(locTerrainDx, kDx);
                 if (locTerrainHalfW >= 0)
@@ -896,7 +996,7 @@ int main() {
             glUniformMatrix4fv(locMVP, 1, GL_FALSE, glm::value_ptr(mvp));
             glUniform3fv(locLight, 1, glm::value_ptr(lightDir));
             if (locCamPos >= 0)
-                glUniform3fv(locCamPos, 1, glm::value_ptr(kFixedCamEye));
+                glUniform3fv(locCamPos, 1, glm::value_ptr(camEye));
             if (locReflVP >= 0)
                 glUniformMatrix4fv(locReflVP, 1, GL_FALSE, glm::value_ptr(reflVP));
             if (locWaterAlpha >= 0)
@@ -1008,8 +1108,10 @@ int main() {
             drawPane(0, frame.fbW, g, aspect);
         }
 
+        ImGui::Render();
+        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
         glfwSwapBuffers(window);
-        glfwPollEvents();
 
         {
             const double now = glfwGetTime();
@@ -1021,14 +1123,17 @@ int main() {
             }
             char title[256];
             const char* gear = (boat.speed > 0.05f) ? "FWD" : (boat.speed < -0.05f) ? "REV" : "NEU";
+            const char* camStr = (sceneCam.mode == SceneCamMode::Orbital)   ? "orbit"
+                                 : (sceneCam.mode == SceneCamMode::Bridge) ? "bridge"
+                                                                           : "fly";
             if (kSplitCompareSwe) {
                 std::snprintf(title, sizeof title,
-                              "Coupled left | SWE right | %.0f FPS | %.2f m/s (%s) | thr %.2f",
-                              static_cast<double>(fpsShown), boat.speed, gear, boat.throttle);
+                              "Coupled left | SWE right | %.0f FPS | %s | %.2f m/s (%s) | thr %.2f",
+                              static_cast<double>(fpsShown), camStr, boat.speed, gear, boat.throttle);
             } else {
                 std::snprintf(title, sizeof title,
-                              "Shallow water | %.0f FPS | %.2f m/s (%s) | throttle %.2f",
-                              static_cast<double>(fpsShown), boat.speed, gear, boat.throttle);
+                              "Shallow water | %.0f FPS | %s | %.2f m/s (%s) | thr %.2f",
+                              static_cast<double>(fpsShown), camStr, boat.speed, gear, boat.throttle);
             }
             glfwSetWindowTitle(window, title);
         }
@@ -1065,6 +1170,9 @@ int main() {
     glDeleteBuffers(1, &vbo);
     glDeleteBuffers(1, &ebo);
     glDeleteVertexArrays(1, &vao);
+    ImGui_ImplOpenGL3_Shutdown();
+    ImGui_ImplGlfw_Shutdown();
+    ImGui::DestroyContext();
     glfwDestroyWindow(window);
     glfwTerminate();
     return 0;

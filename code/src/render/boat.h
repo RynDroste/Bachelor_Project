@@ -21,6 +21,6 @@ struct Boat {
 };
 
 void updateBoat(Boat& boat, Grid& g, GLFWwindow* window, float halfW, float halfD, float dt,
-                bool manualControl);
+                bool keyboardSteeringEnabled, bool useArrowKeysForSteering);
 
 void applyBoatForcing(Boat& boat, Grid& g, float halfW, float halfD, float dt);

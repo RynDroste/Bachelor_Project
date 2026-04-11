@@ -419,19 +419,6 @@ int main() {
             simT += g.dt;
         }
 
-        static double lastFroudePrintSimT = -1e9;
-        constexpr double kFroudePrintInterval = 0.25;
-        if (simT - lastFroudePrintSimT >= kFroudePrintInterval) {
-            lastFroudePrintSimT = simT;
-            const ShallowWaterDiagnostics diag = gridShallowWaterDiagnostics(g, kG);
-            std::printf(
-                "t=%.3f s  Fr_max=%.4f  |u|@Frmax=%.4f m/s  h@Frmax=%.4f m  |u|_max=%.4f  h_min_wet=%.4f m\n",
-                simT, static_cast<double>(diag.fr_max), static_cast<double>(diag.speed_at_fr_max),
-                static_cast<double>(diag.h_at_fr_max), static_cast<double>(diag.speed_max),
-                static_cast<double>(diag.h_min_wet));
-            std::fflush(stdout);
-        }
-
         uploadWaterDepthTexture(g, texH);
 
         const float aspect = frame.fbH > 0 ? static_cast<float>(frame.fbW) / static_cast<float>(frame.fbH) : 1.f;

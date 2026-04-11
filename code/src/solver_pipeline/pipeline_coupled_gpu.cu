@@ -7,8 +7,10 @@
 
 #include <cuda_runtime.h>
 
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <vector>
 
 namespace {
 
@@ -120,6 +122,26 @@ void coupledSubstepGpu(Grid& g, float halfW, float halfD, WaveDecomposition& dec
     swePrefetchDeviceTerrain(g);
 
     const WaveDecompGpuPtrs wd = waveDecomposeGpuDeviceOnly(g, gradPenaltyD, waveDiffuseIters);
+
+    // DEBUG: print h_tilde vs h_bar RMS every 120 steps
+    {
+        static int s_dbg_counter = 0;
+        if (++s_dbg_counter % 120 == 0) {
+            std::vector<float> h_tilde_host(ncell), h_bar_host(ncell);
+            cudaMemcpy(h_tilde_host.data(), wd.d_h_tilde, ncell * sizeof(float), cudaMemcpyDeviceToHost);
+            cudaMemcpy(h_bar_host.data(),   wd.d_h_bar,   ncell * sizeof(float), cudaMemcpyDeviceToHost);
+            double rms_tilde = 0, rms_bar = 0;
+            for (int i = 0; i < ncell; ++i) {
+                rms_tilde += h_tilde_host[i] * h_tilde_host[i];
+                rms_bar   += h_bar_host[i]   * h_bar_host[i];
+            }
+            rms_tilde = std::sqrt(rms_tilde / ncell);
+            rms_bar   = std::sqrt(rms_bar   / ncell);
+            std::printf("[coupled] step=%d  h_tilde RMS=%.6f  h_bar RMS=%.6f  ratio=%.4f\n",
+                        s_dbg_counter, rms_tilde, rms_bar,
+                        rms_bar > 1e-12 ? rms_tilde / rms_bar : 0.0);
+        }
+    }
 
     const size_t szCell = static_cast<size_t>(ncell) * sizeof(float);
     const size_t szQx   = static_cast<size_t>(nqx) * sizeof(float);

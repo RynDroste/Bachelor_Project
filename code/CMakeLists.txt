@@ -30,8 +30,14 @@ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/glad/src/glad.c"
     message(FATAL_ERROR "GLAD missing: need external/glad/src/glad.c and external/glad/include/glad/glad.h")
 endif()
 
+set(IMGUI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/imgui")
 add_executable(${PROJECT_NAME}
     ${APP_SOURCES}
+    "${IMGUI_DIR}/imgui.cpp"
+    "${IMGUI_DIR}/imgui_draw.cpp"
+    "${IMGUI_DIR}/imgui_tables.cpp"
+    "${IMGUI_DIR}/imgui_widgets.cpp"
+    "${IMGUI_DIR}/backends/imgui_impl_glfw.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/external/glad/src/glad.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/solver_pipeline/airy_cuda_kernels.cu"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/solver_pipeline/wave_decompose_gpu.cu"
@@ -55,6 +61,8 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${CMAKE_CURRENT_SOURCE_DIR}/external/glad/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/external/stb"
+    "${IMGUI_DIR}"
+    "${IMGUI_DIR}/backends"
 )
 
 find_package(OpenGL REQUIRED)

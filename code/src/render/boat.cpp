@@ -61,21 +61,33 @@ void worldToCellFrac(float x, float z, float halfW, float halfD, float dx, float
 }  // namespace
 
 void updateBoat(Boat& boat, Grid& g, GLFWwindow* window, float halfW, float halfD, float dt,
-                bool manualControl) {
-    if (manualControl && window) {
-        if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
-            boat.throttle = std::min(1.f, boat.throttle + dt * 0.8f);
-        if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
-            boat.throttle = std::max(-1.f, boat.throttle - dt * 0.8f);
-        if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
-            boat.rudder = std::max(-0.5f, boat.rudder - dt * 0.6f);
-        if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
-            boat.rudder = std::min(0.5f, boat.rudder + dt * 0.6f);
-        if (glfwGetKey(window, GLFW_KEY_A) != GLFW_PRESS && glfwGetKey(window, GLFW_KEY_D) != GLFW_PRESS)
-            boat.rudder *= std::exp(-dt * 4.f);
+                bool keyboardSteeringEnabled, bool useArrowKeysForSteering) {
+    if (keyboardSteeringEnabled && window) {
+        if (useArrowKeysForSteering) {
+            if (glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS)
+                boat.throttle = std::min(1.f, boat.throttle + dt * 0.8f);
+            if (glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS)
+                boat.throttle = std::max(-1.f, boat.throttle - dt * 0.8f);
+            if (glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS)
+                boat.rudder = std::max(-0.5f, boat.rudder - dt * 0.6f);
+            if (glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS)
+                boat.rudder = std::min(0.5f, boat.rudder + dt * 0.6f);
+            if (glfwGetKey(window, GLFW_KEY_LEFT) != GLFW_PRESS && glfwGetKey(window, GLFW_KEY_RIGHT) != GLFW_PRESS)
+                boat.rudder *= std::exp(-dt * 4.f);
+        } else {
+            if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
+                boat.throttle = std::min(1.f, boat.throttle + dt * 0.8f);
+            if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
+                boat.throttle = std::max(-1.f, boat.throttle - dt * 0.8f);
+            if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
+                boat.rudder = std::max(-0.5f, boat.rudder - dt * 0.6f);
+            if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
+                boat.rudder = std::min(0.5f, boat.rudder + dt * 0.6f);
+            if (glfwGetKey(window, GLFW_KEY_A) != GLFW_PRESS && glfwGetKey(window, GLFW_KEY_D) != GLFW_PRESS)
+                boat.rudder *= std::exp(-dt * 4.f);
+        }
     } else {
-        boat.rudder *= std::exp(-dt * 2.f);
-        boat.throttle = 0.55f;
+        boat.rudder *= std::exp(-dt * 4.f);
     }
 
     boat.speed = boat.throttle * kMaxSpeed;

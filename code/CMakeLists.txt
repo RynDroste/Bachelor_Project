@@ -30,7 +30,24 @@ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/glad/src/glad.c"
     message(FATAL_ERROR "GLAD missing: need external/glad/src/glad.c and external/glad/include/glad/glad.h")
 endif()
 
+# Dear ImGui: use external/imgui if you vendored it; otherwise fetch at configure time (needs Git + network once).
 set(IMGUI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/imgui")
+if(NOT EXISTS "${IMGUI_DIR}/imgui.cpp")
+    include(FetchContent)
+    FetchContent_Declare(
+        imgui_fc
+        GIT_REPOSITORY https://github.com/ocornut/imgui.git
+        GIT_TAG        v1.91.8
+        GIT_SHALLOW    TRUE
+    )
+    FetchContent_GetProperties(imgui_fc)
+    if(NOT imgui_fc_POPULATED)
+        message(STATUS "ImGui not in external/imgui — FetchContent downloading to build dir...")
+        FetchContent_Populate(imgui_fc)
+    endif()
+    set(IMGUI_DIR "${imgui_fc_SOURCE_DIR}")
+endif()
+
 add_executable(${PROJECT_NAME}
     ${APP_SOURCES}
     "${IMGUI_DIR}/imgui.cpp"
@@ -131,7 +148,7 @@ target_link_libraries(DiffusionDispersionBench PRIVATE CUDA::cudart)
 
 set(BP_SHADERS_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/shaders")
 string(REPLACE "\\" "/" BP_SHADERS_ROOT "${BP_SHADERS_ROOT}")
-set(BP_SKYBOX_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/external/skybox")
+set(BP_SKYBOX_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/external/skybox/cloudySea_faces")
 string(REPLACE "\\" "/" BP_SKYBOX_ROOT "${BP_SKYBOX_ROOT}")
 set(BP_SAND01_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/external/sand_01_1k")
 string(REPLACE "\\" "/" BP_SAND01_ROOT "${BP_SAND01_ROOT}")

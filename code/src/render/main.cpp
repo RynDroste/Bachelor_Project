@@ -672,7 +672,16 @@ int main() {
     glm::vec3 lightDir = glm::normalize(glm::vec3(0.35f, 0.85f, 0.4f));
 
     float     envMaxMipF = 0.f;
-    const GLuint envCubemap = createEnvCubemap(BP_SKYBOX_ROOT, lightDir, &envMaxMipF);
+    const GLuint envCubemap = createEnvCubemap(BP_SKYBOX_ROOT, &envMaxMipF);
+    if (!envCubemap) {
+        std::fprintf(stderr, "fatal: skybox cubemap failed to load from %s\n", BP_SKYBOX_ROOT);
+        ImGui_ImplOpenGL3_Shutdown();
+        ImGui_ImplGlfw_Shutdown();
+        ImGui::DestroyContext();
+        glfwDestroyWindow(window);
+        glfwTerminate();
+        return 1;
+    }
 
     Boat boat;
     {
@@ -1153,7 +1162,8 @@ int main() {
     destroyTerrainSand04(sandTex);
     if (causticTex)
         glDeleteTextures(1, &causticTex);
-    glDeleteTextures(1, &envCubemap);
+    if (envCubemap)
+        glDeleteTextures(1, &envCubemap);
     if (reflFbo) {
         glDeleteFramebuffers(1, &reflFbo);
         glDeleteTextures(1, &reflColorTex);

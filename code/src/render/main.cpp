@@ -11,9 +11,9 @@
 #include "solver_pipeline/pipeline.h"
 #include "render/boat.h"
 #include "render/scene_camera.h"
-#include "render/env_cubemap.h"
 #include "render/terrain_material.h"
 #include "render/shader_file.h"
+#include "render/skybox.h"
 #include "solver_pipeline/shallow_water_solver.h"
 #include "solver_pipeline/wavedecomposer.h"
 #include <algorithm>
@@ -28,14 +28,14 @@
 #ifndef BP_TOOLS_ROOT
 #define BP_TOOLS_ROOT "."
 #endif
-#ifndef BP_SKYBOX_ROOT
-#define BP_SKYBOX_ROOT "."
-#endif
 #ifndef BP_SAND01_ROOT
 #define BP_SAND01_ROOT "."
 #endif
 #ifndef BP_CAUSTIC_ROOT
 #define BP_CAUSTIC_ROOT "."
+#endif
+#ifndef BP_SKYBOX_ROOT
+#define BP_SKYBOX_ROOT "."
 #endif
 
 namespace {
@@ -76,19 +76,9 @@ constexpr float kClipFar       = 500.f;
 constexpr float kDepthAbsorb   = 0.008f;
 constexpr float kRefractionMaxOffset = 0.06f;
 constexpr float kRefractionLinTol    = 0.12f;
-constexpr float kEnvWaveRough = 0.14f;
 constexpr bool kWaterBodyLitOnlyDefault = false;
 constexpr bool kRenderTerrainMesh = true;
 constexpr float kTerrainMaterialUvScale = 0.035f;
-
-static const float kSkyboxVerts[] = {
-    -1.f, 1.f,  -1.f, -1.f, -1.f, -1.f, 1.f,  -1.f, -1.f, 1.f,  -1.f, -1.f, 1.f,  1.f,  -1.f, -1.f, 1.f,  -1.f,
-    -1.f, -1.f, 1.f,  -1.f, -1.f, -1.f, -1.f, 1.f,  -1.f, -1.f, 1.f,  -1.f, -1.f, 1.f,  1.f,  -1.f, -1.f, 1.f,
-    1.f,  -1.f, -1.f, 1.f,  -1.f, 1.f,  1.f, 1.f,  1.f,  1.f, 1.f,  1.f,  1.f, 1.f,  -1.f, 1.f,  -1.f, -1.f,
-    -1.f, -1.f, -1.f, -1.f, -1.f, 1.f,  1.f, -1.f, -1.f, 1.f,  -1.f, -1.f, -1.f, -1.f, 1.f,  1.f,  -1.f, 1.f,
-    -1.f, 1.f,  -1.f, 1.f,  1.f,  -1.f, 1.f,  1.f,  1.f,  1.f, 1.f,  1.f,  -1.f, 1.f,  1.f,  -1.f, 1.f,  -1.f,
-    -1.f, -1.f, -1.f, -1.f, -1.f, 1.f,  1.f, -1.f, 1.f,  1.f, -1.f, 1.f,  1.f, -1.f, -1.f, -1.f, -1.f, -1.f,
-};
 
 GLuint compileShader(GLenum type, const char* src) {
     GLuint s = glCreateShader(type);
@@ -517,9 +507,6 @@ int main() {
     GLint locHalfD = glGetUniformLocation(prog, "uHalfD");
     GLint locTexH = glGetUniformLocation(prog, "uH");
     GLint locTexB = glGetUniformLocation(prog, "uB");
-    GLint locEnvMap = glGetUniformLocation(prog, "uEnvMap");
-    GLint locEnvMaxMip = glGetUniformLocation(prog, "uEnvMaxMip");
-    GLint locWaveRough = glGetUniformLocation(prog, "uWaveRough");
     GLint locReflTex = glGetUniformLocation(prog, "uReflectionTex");
     GLint locReflVP  = glGetUniformLocation(prog, "uReflViewProj");
     GLint locWetEps  = glGetUniformLocation(prog, "uWetDepthEps");
@@ -636,27 +623,6 @@ int main() {
     glEnableVertexAttribArray(1);
     glBindVertexArray(0);
 
-    std::string skyVs = loadTextFile(shaderPath("skybox.vert"));
-    std::string skyFs = loadTextFile(shaderPath("skybox.frag"));
-    GLuint      skyProg = 0;
-    if (!skyVs.empty() && !skyFs.empty())
-        skyProg = makeProgram(skyVs.c_str(), skyFs.c_str());
-    if (!skyProg)
-        std::fprintf(stderr, "warning: skybox shaders missing or failed to compile (tried %s)\n",
-                     shaderPath("skybox.vert").c_str());
-    GLint locSkyProj = skyProg ? glGetUniformLocation(skyProg, "uProj") : -1;
-    GLint locSkyView = skyProg ? glGetUniformLocation(skyProg, "uViewSky") : -1;
-    GLint locSkyMap  = skyProg ? glGetUniformLocation(skyProg, "uSkyMap") : -1;
-    GLuint skyVao = 0, skyVbo = 0;
-    glGenVertexArrays(1, &skyVao);
-    glGenBuffers(1, &skyVbo);
-    glBindVertexArray(skyVao);
-    glBindBuffer(GL_ARRAY_BUFFER, skyVbo);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(kSkyboxVerts), kSkyboxVerts, GL_STATIC_DRAW);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), reinterpret_cast<void*>(0));
-    glEnableVertexAttribArray(0);
-    glBindVertexArray(0);
-
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LESS);
     glEnable(GL_CLIP_DISTANCE0);
@@ -670,18 +636,6 @@ int main() {
     int    refractDepthBufW = 0, refractDepthBufH = 0;
 
     glm::vec3 lightDir = glm::normalize(glm::vec3(0.35f, 0.85f, 0.4f));
-
-    float     envMaxMipF = 0.f;
-    const GLuint envCubemap = createEnvCubemap(BP_SKYBOX_ROOT, &envMaxMipF);
-    if (!envCubemap) {
-        std::fprintf(stderr, "fatal: skybox cubemap failed to load from %s\n", BP_SKYBOX_ROOT);
-        ImGui_ImplOpenGL3_Shutdown();
-        ImGui_ImplGlfw_Shutdown();
-        ImGui::DestroyContext();
-        glfwDestroyWindow(window);
-        glfwTerminate();
-        return 1;
-    }
 
     Boat boat;
     {
@@ -698,6 +652,10 @@ int main() {
 
     SceneCamera sceneCam;
     sceneCam.resetOrbitalFromEye(kFixedCamEye, boat);
+
+    SkyboxGL skybox{};
+    if (!skyboxInit(skybox, BP_SKYBOX_ROOT))
+        std::fprintf(stderr, "warning: skybox disabled (check %s and shaders/skybox.*)\n", BP_SKYBOX_ROOT);
 
     double fpsPrevT = glfwGetTime();
     double wallPrev = fpsPrevT;
@@ -838,26 +796,6 @@ int main() {
                 glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
                 glEnable(GL_DEPTH_TEST);
 
-                if (skyProg) {
-                    glDepthMask(GL_FALSE);
-                    glDepthFunc(GL_LEQUAL);
-                    glUseProgram(skyProg);
-                    const glm::mat4 skyViewR = glm::mat4(glm::mat3(viewRefl));
-                    if (locSkyProj >= 0)
-                        glUniformMatrix4fv(locSkyProj, 1, GL_FALSE, glm::value_ptr(proj));
-                    if (locSkyView >= 0)
-                        glUniformMatrix4fv(locSkyView, 1, GL_FALSE, glm::value_ptr(skyViewR));
-                    glActiveTexture(GL_TEXTURE0);
-                    glBindTexture(GL_TEXTURE_CUBE_MAP, envCubemap);
-                    if (locSkyMap >= 0)
-                        glUniform1i(locSkyMap, 0);
-                    glBindVertexArray(skyVao);
-                    glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(sizeof(kSkyboxVerts) / (sizeof(float) * 3u)));
-                    glBindVertexArray(0);
-                    glDepthFunc(GL_LESS);
-                    glDepthMask(GL_TRUE);
-                }
-
                 if (boatProg) {
                     glUseProgram(boatProg);
                     const glm::mat4 mvpR = proj * viewRefl;
@@ -884,25 +822,7 @@ int main() {
 
             glViewport(vpX, 0, vpW, frame.fbH);
 
-            if (skyProg) {
-                glDepthMask(GL_FALSE);
-                glDepthFunc(GL_LEQUAL);
-                glUseProgram(skyProg);
-                const glm::mat4 skyView = glm::mat4(glm::mat3(view));
-                if (locSkyProj >= 0)
-                    glUniformMatrix4fv(locSkyProj, 1, GL_FALSE, glm::value_ptr(proj));
-                if (locSkyView >= 0)
-                    glUniformMatrix4fv(locSkyView, 1, GL_FALSE, glm::value_ptr(skyView));
-                glActiveTexture(GL_TEXTURE0);
-                glBindTexture(GL_TEXTURE_CUBE_MAP, envCubemap);
-                if (locSkyMap >= 0)
-                    glUniform1i(locSkyMap, 0);
-                glBindVertexArray(skyVao);
-                glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(sizeof(kSkyboxVerts) / (sizeof(float) * 3u)));
-                glBindVertexArray(0);
-                glDepthFunc(GL_LESS);
-                glDepthMask(GL_TRUE);
-            }
+            skyboxDraw(skybox, proj, view);
 
             if (kRenderTerrainMesh && terrainProg) {
                 glDisable(GL_BLEND);
@@ -1070,25 +990,17 @@ int main() {
             if (locTexB >= 0)
                 glUniform1i(locTexB, 1);
             glActiveTexture(GL_TEXTURE2);
-            glBindTexture(GL_TEXTURE_CUBE_MAP, envCubemap);
-            if (locEnvMap >= 0)
-                glUniform1i(locEnvMap, 2);
-            if (locEnvMaxMip >= 0)
-                glUniform1f(locEnvMaxMip, envMaxMipF);
-            if (locWaveRough >= 0)
-                glUniform1f(locWaveRough, kEnvWaveRough);
-            glActiveTexture(GL_TEXTURE3);
             glBindTexture(GL_TEXTURE_2D, reflColorTex);
             if (locReflTex >= 0)
-                glUniform1i(locReflTex, 3);
-            glActiveTexture(GL_TEXTURE4);
+                glUniform1i(locReflTex, 2);
+            glActiveTexture(GL_TEXTURE3);
             glBindTexture(GL_TEXTURE_2D, refractColorTex);
             if (locRefractTex >= 0)
-                glUniform1i(locRefractTex, 4);
-            glActiveTexture(GL_TEXTURE5);
+                glUniform1i(locRefractTex, 3);
+            glActiveTexture(GL_TEXTURE4);
             glBindTexture(GL_TEXTURE_2D, refractDepthTex);
             if (locSceneDepth >= 0)
-                glUniform1i(locSceneDepth, 5);
+                glUniform1i(locSceneDepth, 4);
             glActiveTexture(GL_TEXTURE0);
 
             glBindVertexArray(vao);
@@ -1148,22 +1060,18 @@ int main() {
         }
     }
 
+    skyboxShutdown(skybox);
+
     glDeleteProgram(prog);
     if (terrainProg)
         glDeleteProgram(terrainProg);
     if (boatProg)
         glDeleteProgram(boatProg);
-    if (skyProg)
-        glDeleteProgram(skyProg);
-    glDeleteBuffers(1, &skyVbo);
-    glDeleteVertexArrays(1, &skyVao);
     glDeleteTextures(1, &texH);
     glDeleteTextures(1, &texB);
     destroyTerrainSand04(sandTex);
     if (causticTex)
         glDeleteTextures(1, &causticTex);
-    if (envCubemap)
-        glDeleteTextures(1, &envCubemap);
     if (reflFbo) {
         glDeleteFramebuffers(1, &reflFbo);
         glDeleteTextures(1, &reflColorTex);

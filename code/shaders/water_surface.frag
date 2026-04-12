@@ -4,9 +4,6 @@ in float vDepth;
 in float vGerstnerPeak;
 uniform vec3 uLightDir;
 uniform vec3 uCameraPos;
-uniform samplerCube uEnvMap;
-uniform float uEnvMaxMip;
-uniform float uWaveRough;
 uniform sampler2D uReflectionTex;
 uniform sampler2D uRefractionTex;
 uniform sampler2D uSceneDepth;
@@ -167,6 +164,13 @@ float linearizeDepth(float z, float near, float far) {
     return (2.0 * near * far) / (far + near - zNdc * (far - near));
 }
 
+vec3 envSkyRadiance(vec3 w) {
+    float y = clamp(w.y * 0.5 + 0.5, 0.0, 1.0);
+    vec3 zenith = vec3(0.22, 0.45, 0.92);
+    vec3 horizon = vec3(0.58, 0.70, 0.94);
+    return mix(horizon, zenith, pow(y, 0.82));
+}
+
 vec3 glassBSDF(vec3 N, vec3 V, vec2 screenUV, vec2 refractOff, vec3 planarReflect, float reflOk,
                float waterDeviceZ, vec3 base) {
     float near = uClipNF.x;
@@ -193,9 +197,7 @@ vec3 glassBSDF(vec3 N, vec3 V, vec2 screenUV, vec2 refractOff, vec3 planarReflec
     refract *= mix(vec3(1.0), base, kGlassBaseTint);
 
     vec3 reflectDir = reflect(-V, N);
-    float alpha = kRoughness * kRoughness;
-    float mip = min(uWaveRough * uEnvMaxMip + alpha * uEnvMaxMip, uEnvMaxMip);
-    vec3 envReflect = textureLod(uEnvMap, reflectDir, mip).rgb;
+    vec3 envReflect = envSkyRadiance(reflectDir);
     vec3 reflectCombined = mix(envReflect * kIBLSpecMul, planarReflect * kIBLSpecMul, reflOk * kPlanarReflMix);
 
     float nvSurf = max(dot(N, V), 0.0);
@@ -297,8 +299,7 @@ void main() {
         spec *= 1.0 + 2.2 * pow(1.0 - nv, 2.5);
     }
 
-    float lodDiff = uEnvMaxMip * 0.88;
-    vec3 irradiance = textureLod(uEnvMap, N, lodDiff).rgb;
+    vec3 irradiance = envSkyRadiance(N);
     float F0ior = pow((1.0 - uIOR) / (1.0 + uIOR), 2.0);
     vec3 Fnv = fresnelSchlick(nv, vec3(F0ior));
     vec3 iblDiffuse = irradiance * base * (vec3(1.0) - Fnv) * kIBLDiffuseMul;

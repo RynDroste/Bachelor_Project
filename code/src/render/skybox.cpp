@@ -15,8 +15,6 @@
 
 namespace {
 
-constexpr const char kCubemapName[] = "Cubemap_Sky_23-512x512";
-
 static const GLenum kCubeFace[] = {
     GL_TEXTURE_CUBE_MAP_POSITIVE_X,
     GL_TEXTURE_CUBE_MAP_NEGATIVE_X,
@@ -26,7 +24,24 @@ static const GLenum kCubeFace[] = {
     GL_TEXTURE_CUBE_MAP_NEGATIVE_Z,
 };
 
-static const char* kFaceTag[] = {"posx", "negx", "posy", "negy", "posz", "negz"};
+// Cubemap face mapping: (+X/-X/+Y/-Y/+Z/-Z)
+static const char* kFaceDaylight[] = {
+    "Daylight Box_Right.bmp",
+    "Daylight Box_Left.bmp",
+    "Daylight Box_Top.bmp",
+    "Daylight Box_Bottom.bmp",
+    "Daylight Box_Front.bmp",
+    "Daylight Box_Back.bmp",
+};
+
+static const char* kFaceJpg[] = {
+    "right.jpg",
+    "left.jpg",
+    "top.jpg",
+    "bottom.jpg",
+    "front.jpg",
+    "back.jpg",
+};
 
 static const float kUnitCube[] = {
     -1.f, 1.f,  -1.f, -1.f, -1.f, -1.f, 1.f, -1.f, -1.f, 1.f, -1.f, -1.f, 1.f, 1.f, -1.f, -1.f, 1.f,  -1.f,
@@ -87,11 +102,16 @@ bool skyboxInit(SkyboxGL& out, const char* skyboxRootDir) {
     bool        ok = true;
     int         w0 = 0, h0 = 0;
     for (int i = 0; i < 6; ++i) {
-        char name[256];
-        std::snprintf(name, sizeof name, "%s_%s.png", kCubemapName, kFaceTag[i]);
-        pathJoin(path, skyboxRootDir, name);
         int w = 0, h = 0;
-        unsigned char* data = stbi_load(path.c_str(), &w, &h, nullptr, 4);
+        unsigned char* data = nullptr;
+
+        // Prefer Daylight Box assets; if unavailable, fallback to jpg skybox set.
+        pathJoin(path, skyboxRootDir, kFaceDaylight[i]);
+        data = stbi_load(path.c_str(), &w, &h, nullptr, 4);
+        if (!data) {
+            pathJoin(path, skyboxRootDir, kFaceJpg[i]);
+            data = stbi_load(path.c_str(), &w, &h, nullptr, 4);
+        }
         if (!data || w <= 0 || h <= 0) {
             if (data)
                 stbi_image_free(data);

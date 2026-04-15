@@ -12,7 +12,6 @@ constexpr float kFpsMoveSpeed = 28.f;
 constexpr float kPitchLimit   = 1.48f;
 constexpr float kOrbitRMin    = 8.f;
 constexpr float kOrbitRMax    = 280.f;
-constexpr float kDeckLocalY   = 2.0f;
 
 glm::vec3 boatPivot(const Boat& boat) {
     return glm::vec3(boat.pos.x, boat.z + 1.1f, boat.pos.y);
@@ -43,42 +42,24 @@ void SceneCamera::setMode(SceneCamMode m, const Boat& boat) {
     if (m == mode) {
         if (m == SceneCamMode::Orbital)
             recomputeOrbital(boat);
-        else if (m == SceneCamMode::Bridge)
-            recomputeBridge(boat);
         return;
     }
 
     const SceneCamMode prev = mode;
 
     if (m == SceneCamMode::Fps) {
-        if (prev == SceneCamMode::Orbital) {
+        if (prev == SceneCamMode::Orbital)
             syncFpsFromOrbital(boat);
-        } else if (prev == SceneCamMode::Bridge) {
-            recomputeBridge(boat);
-            fpsEye_ = eye_;
-            const glm::vec3 f = glm::normalize(target_ - eye_);
-            fpsPitch_           = std::asin(glm::clamp(f.y, -1.f, 1.f));
-            fpsYaw_             = std::atan2(f.z, f.x);
-        }
     } else if (m == SceneCamMode::Orbital) {
-        if (prev == SceneCamMode::Fps) {
+        if (prev == SceneCamMode::Fps)
             syncOrbitalFromFps(boat);
-        } else if (prev == SceneCamMode::Bridge) {
-            recomputeBridge(boat);
-            fpsEye_ = eye_;
-            syncOrbitalFromFps(boat);
-        }
     }
 
-    mode              = m;
-    bridgeYawOff_     = 0.f;
-    bridgePitchOff_   = 0.f;
-    dragActive_       = false;
+    mode        = m;
+    dragActive_ = false;
 
     if (mode == SceneCamMode::Orbital)
         recomputeOrbital(boat);
-    else if (mode == SceneCamMode::Bridge)
-        recomputeBridge(boat);
     else {
         eye_    = fpsEye_;
         target_ = fpsEye_ + glm::vec3(std::cos(fpsYaw_) * std::cos(fpsPitch_), std::sin(fpsPitch_),
@@ -118,26 +99,6 @@ void SceneCamera::recomputeOrbital(const Boat& boat) {
     target_ = focus;
 }
 
-void SceneCamera::recomputeBridge(const Boat& boat) {
-    const glm::vec3 pivot = boatPivot(boat);
-    const float     co    = std::cos(boat.heading);
-    const float     si    = std::sin(boat.heading);
-    glm::vec3       up(0.f, 1.f, 0.f);
-    glm::vec3       forward(co, 0.f, si);
-    glm::vec3       right   = glm::normalize(glm::cross(forward, up));
-    glm::vec3       trueUp  = glm::normalize(glm::cross(right, forward));
-
-    eye_ = pivot + forward * 0.5f + trueUp * kDeckLocalY;
-
-    float cy = std::cos(bridgeYawOff_);
-    float sy = std::sin(bridgeYawOff_);
-    float cp = std::cos(bridgePitchOff_);
-    float sp = std::sin(bridgePitchOff_);
-    glm::vec3 look = forward * cy * cp + right * sy * cp + trueUp * sp;
-    look             = glm::normalize(look);
-    target_          = eye_ + look * 200.f;
-}
-
 void SceneCamera::update(GLFWwindow* w, float dt, const Boat& boat, bool imguiWantMouse, bool imguiWantKb,
                          float imguiMouseWheel) {
     double mx, my;
@@ -171,16 +132,6 @@ void SceneCamera::update(GLFWwindow* w, float dt, const Boat& boat, bool imguiWa
             orbitPitch_ += dy * kRotateSens;
         }
         recomputeOrbital(boat);
-        return;
-    }
-
-    if (mode == SceneCamMode::Bridge) {
-        if (dragNow && dx * dx + dy * dy > 0.f) {
-            bridgeYawOff_ -= dx * kRotateSens;
-            bridgePitchOff_ += dy * kRotateSens;
-            bridgePitchOff_ = glm::clamp(bridgePitchOff_, -0.45f, 0.45f);
-        }
-        recomputeBridge(boat);
         return;
     }
 

@@ -31,8 +31,8 @@ namespace bp_swe_detail {
 
 constexpr float kG         = 9.81f;
 constexpr float kDryEps    = 1e-3f;
-constexpr float kCflFactor = 100.f;
-constexpr float kCflWave   = 0.4f;
+constexpr float kCflFactor = 75.f;
+constexpr float kCflWave   = 0.8f;
 
 __device__ __forceinline__ int idxH(int i, int j, int nx) { return i + j * nx; }
 __device__ __forceinline__ int idxQX(int i, int j, int nx) { return i + j * (nx + 1); }

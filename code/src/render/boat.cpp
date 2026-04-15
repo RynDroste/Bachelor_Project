@@ -14,7 +14,6 @@ constexpr float kDryEps   = 1e-4f;
 constexpr float kMaxSpeed = 8.f;
 constexpr float kTurnGain = 1.2f;
 constexpr float kPointQStrength = 320.f;
-constexpr int kLateralHalfWidthCells = 4;
 
 float sampleH(const Grid& g, int i, int j) {
     i = std::clamp(i, 0, g.NX - 1);
@@ -124,6 +123,10 @@ void updateBoat(Boat& boat, Grid& g, GLFWwindow* window, float halfW, float half
 }
 
 void applyBoatForcing(Boat& boat, Grid& g, float halfW, float halfD, float dt) {
+    // Keep the forcing inside the SWE simulation domain even if visual ocean is larger.
+    if (boat.pos.x < -halfW || boat.pos.x > halfW || boat.pos.y < -halfD || boat.pos.y > halfD)
+        return;
+
     const float th = boat.heading;
     const float vx = std::cos(th) * boat.speed;
     const float vz = std::sin(th) * boat.speed;
@@ -131,10 +134,8 @@ void applyBoatForcing(Boat& boat, Grid& g, float halfW, float halfD, float dt) {
     if (vlen < 1e-4f)
         return;
 
-    const float bx = boat.pos.x;
-    const float bz = boat.pos.y;
-    const float cx = (bx + halfW) / g.dx - 0.5f;
-    const float cy = (bz + halfD) / g.dx - 0.5f;
+    const float cx = (boat.pos.x + halfW) / g.dx - 0.5f;
+    const float cy = (boat.pos.y + halfD) / g.dx - 0.5f;
     const int ic = std::clamp(static_cast<int>(std::floor(cx)), 1, g.NX - 2);
     const int jc = std::clamp(static_cast<int>(std::floor(cy)), 1, g.NY - 2);
 
@@ -145,43 +146,17 @@ void applyBoatForcing(Boat& boat, Grid& g, float halfW, float halfD, float dt) {
     const float dirZ = vz / vlen;
     const float dq = kPointQStrength * boat.draft * vlen * dt;
 
-    const float px = -dirZ;
-    const float pz = dirX;
+    const int i = ic;
+    const int j = jc;
 
-    constexpr float kLatSigmaCells = 1.f;
-    const int wSteps = 2 * kLateralHalfWidthCells + 1;
-    float wsum = 0.f;
-    for (int k = 0; k < wSteps; ++k) {
-        const int m = k - kLateralHalfWidthCells;
-        wsum += std::exp(-0.5f * (static_cast<float>(m * m) / (kLatSigmaCells * kLatSigmaCells)));
+    if (dirX >= 0.f) {
+        g.QX(i + 1, j) += dq * dirX;
+    } else {
+        g.QX(i, j) += dq * dirX;
     }
-
-    for (int k = 0; k < wSteps; ++k) {
-        const int m = k - kLateralHalfWidthCells;
-        const float wm =
-            std::exp(-0.5f * (static_cast<float>(m * m) / (kLatSigmaCells * kLatSigmaCells))) / wsum;
-
-        const float sx = bx + static_cast<float>(m) * g.dx * px;
-        const float sz = bz + static_cast<float>(m) * g.dx * pz;
-        const float cxi = (sx + halfW) / g.dx - 0.5f;
-        const float cyi = (sz + halfD) / g.dx - 0.5f;
-        const int i = std::clamp(static_cast<int>(std::floor(cxi)), 1, g.NX - 2);
-        const int j = std::clamp(static_cast<int>(std::floor(cyi)), 1, g.NY - 2);
-
-        if (g.H(i, j) < kDryEps)
-            continue;
-
-        const float dqm = dq * wm;
-
-        if (dirX >= 0.f) {
-            g.QX(i + 1, j) += dqm * dirX;
-        } else {
-            g.QX(i, j) += dqm * dirX;
-        }
-        if (dirZ >= 0.f) {
-            g.QY(i, j + 1) += dqm * dirZ;
-        } else {
-            g.QY(i, j) += dqm * dirZ;
-        }
+    if (dirZ >= 0.f) {
+        g.QY(i, j + 1) += dq * dirZ;
+    } else {
+        g.QY(i, j) += dq * dirZ;
     }
 }

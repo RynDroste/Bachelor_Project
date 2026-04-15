@@ -1,0 +1,6 @@
+alpha check (flat h=h0, cell center): alpha=0.25  h^2/64=0.25  rel err 0.00e+00
+at lambda=2*pi*h ~ 25.1327 m: bar energy fraction Rb^2/(Rb^2+Rt^2) (niter=128) -> 0.7277
+  ('half-half' is continuous cutoff ~2*pi*h; discrete 128-step projection need not be 0.5)
+niter=128: lambda* in [2,30]m closest to half bar energy: 21.000 m (|f-0.5|=0.0063)
+niter=128: max|relative_wave_speed-1| = 0.0998 (~9.98%) at lambda=18.000 m
+niter=0, lambda=2 m: relative_wave_speed=3.5449 (short waves should be >> 1)

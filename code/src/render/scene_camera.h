@@ -5,10 +5,8 @@
 struct GLFWwindow;
 struct Boat;
 
-enum class SceneCamMode { Orbital, Bridge, Fps };
+enum class SceneCamMode { Orbital, Fps };
 
-// SimShip-style camera: orbit around boat, on-deck view, or free fly. Call update() after ImGui::NewFrame()
-// so WantCapture* reflects the current frame state for game input.
 struct SceneCamera {
     SceneCamMode mode = SceneCamMode::Orbital;
 
@@ -24,7 +22,6 @@ struct SceneCamera {
 
 private:
     void recomputeOrbital(const Boat& boat);
-    void recomputeBridge(const Boat& boat);
     void syncFpsFromOrbital(const Boat& boat);
     void syncOrbitalFromFps(const Boat& boat);
 
@@ -34,9 +31,6 @@ private:
     float orbitYaw_   = 0.f;
     float orbitPitch_ = 0.35f;
     float orbitRadius_ = 90.f;
-
-    float bridgeYawOff_   = 0.f;
-    float bridgePitchOff_ = 0.f;
 
     glm::vec3 fpsEye_{0.f};
     float     fpsYaw_   = 0.f;

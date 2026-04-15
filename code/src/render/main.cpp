@@ -13,6 +13,7 @@
 #include "render/scene_camera.h"
 #include "render/terrain_material.h"
 #include "render/shader_file.h"
+#include "render/big_surface.h"
 #include "render/skybox.h"
 #include "solver_pipeline/shallow_water_solver.h"
 #include "solver_pipeline/wavedecomposer.h"
@@ -76,9 +77,12 @@ constexpr float kClipFar       = 500.f;
 constexpr float kDepthAbsorb   = 0.008f;
 constexpr float kRefractionMaxOffset = 0.06f;
 constexpr float kRefractionLinTol    = 0.12f;
-constexpr bool kWaterBodyLitOnlyDefault = false;
 constexpr bool kRenderTerrainMesh = true;
 constexpr float kTerrainMaterialUvScale = 0.035f;
+constexpr bool  kTerrainMatchOceanInFftMode = true;
+constexpr float kFftOceanPatchSizeForMatch  = 100.0f;
+constexpr float kFftOceanPatchCountForMatch = 300.0f;
+constexpr float kBigOceanHalfExtentForBoat  = 0.5f * kFftOceanPatchSizeForMatch * kFftOceanPatchCountForMatch;
 
 GLuint compileShader(GLenum type, const char* src) {
     GLuint s = glCreateShader(type);
@@ -420,7 +424,7 @@ int main() {
         return 1;
     }
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     glfwWindowHint(GLFW_SRGB_CAPABLE, GLFW_TRUE);
 #ifdef __APPLE__
@@ -557,6 +561,10 @@ int main() {
         airy = std::make_unique<AiryEWaveFFTW>(kNx, kNy, kDx);
     const float halfW = 0.5f * kNx * kDx;
     const float halfD = 0.5f * kNy * kDx;
+    const float terrainFftDx =
+        kTerrainMatchOceanInFftMode ? ((kFftOceanPatchSizeForMatch * kFftOceanPatchCountForMatch) / kNx) : kDx;
+    const float terrainFftHalfW = 0.5f * kNx * terrainFftDx;
+    const float terrainFftHalfD = 0.5f * kNy * terrainFftDx;
 
     for (int j = 0; j < kNy; ++j) {
         for (int i = 0; i < kNx; ++i) {
@@ -657,15 +665,31 @@ int main() {
     if (!skyboxInit(skybox, BP_SKYBOX_ROOT))
         std::fprintf(stderr, "warning: skybox disabled (check %s and shaders/skybox.*)\n", BP_SKYBOX_ROOT);
 
+    SimshipOcean simshipOcean;
+    bool         simshipOceanReady = false;
+    bool         useSimshipOcean   = true;
+    {
+        GLint glmaj = 0, glmin = 0;
+        glGetIntegerv(GL_MAJOR_VERSION, &glmaj);
+        glGetIntegerv(GL_MINOR_VERSION, &glmin);
+        if (glmaj < 4 || (glmaj == 4 && glmin < 3)) {
+            std::fprintf(stderr,
+                         "simship_ocean: need OpenGL 4.3+ (have %d.%d); FFT ocean disabled.\n",
+                         glmaj, glmin);
+        } else if (!skybox.cubemap) {
+            std::fprintf(stderr, "simship_ocean: skybox cubemap missing; FFT ocean disabled.\n");
+        } else if (!simshipOcean.init(skybox.cubemap)) {
+            std::fprintf(stderr, "simship_ocean: init failed (check shaders/simship_ocean/)\n");
+        } else
+            simshipOceanReady = true;
+    }
+
     double fpsPrevT = glfwGetTime();
     double wallPrev = fpsPrevT;
     float  fpsShown  = 0.f;
     double simT      = 0.0;
-    bool   waterBodyLitOnly = kWaterBodyLitOnlyDefault;
-    bool   keyBWasDown      = false;
     bool   key1WasDown      = false;
     bool   key2WasDown      = false;
-    bool   key3WasDown      = false;
 
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
@@ -686,14 +710,6 @@ int main() {
         ImGuiIO& imguiIo = ImGui::GetIO();
 
         if (!imguiIo.WantCaptureKeyboard) {
-            const bool bDown = glfwGetKey(window, GLFW_KEY_B) == GLFW_PRESS;
-            if (bDown && !keyBWasDown) {
-                waterBodyLitOnly = !waterBodyLitOnly;
-                std::printf("water body+spec+emission (no glass): %s\n", waterBodyLitOnly ? "on" : "off");
-                std::fflush(stdout);
-            }
-            keyBWasDown = bDown;
-
             auto edge = [&](int key, bool& was) {
                 const bool d = glfwGetKey(window, key) == GLFW_PRESS;
                 const bool e = d && !was;
@@ -703,25 +719,23 @@ int main() {
             if (edge(GLFW_KEY_1, key1WasDown))
                 sceneCam.setMode(SceneCamMode::Orbital, boat);
             if (edge(GLFW_KEY_2, key2WasDown))
-                sceneCam.setMode(SceneCamMode::Bridge, boat);
-            if (edge(GLFW_KEY_3, key3WasDown))
                 sceneCam.setMode(SceneCamMode::Fps, boat);
         } else {
-            keyBWasDown = glfwGetKey(window, GLFW_KEY_B) == GLFW_PRESS;
             key1WasDown = glfwGetKey(window, GLFW_KEY_1) == GLFW_PRESS;
             key2WasDown = glfwGetKey(window, GLFW_KEY_2) == GLFW_PRESS;
-            key3WasDown = glfwGetKey(window, GLFW_KEY_3) == GLFW_PRESS;
         }
 
         ImGui::Begin("Debug");
         if (ImGui::RadioButton("1 · Orbital (LMB orbit, wheel zoom)", sceneCam.mode == SceneCamMode::Orbital))
             sceneCam.setMode(SceneCamMode::Orbital, boat);
-        if (ImGui::RadioButton("2 · Bridge (on boat, LMB look)", sceneCam.mode == SceneCamMode::Bridge))
-            sceneCam.setMode(SceneCamMode::Bridge, boat);
-        if (ImGui::RadioButton("3 · Fly cam (WASD+E/Q; boat: arrow keys)", sceneCam.mode == SceneCamMode::Fps))
+        if (ImGui::RadioButton("2 · Fly cam (WASD+E/Q; boat: arrow keys)", sceneCam.mode == SceneCamMode::Fps))
             sceneCam.setMode(SceneCamMode::Fps, boat);
         ImGui::Separator();
-        ImGui::Checkbox("Water body lit only (or B)", &waterBodyLitOnly);
+        if (!simshipOceanReady)
+            ImGui::BeginDisabled();
+        ImGui::Checkbox("Big surface", &useSimshipOcean);
+        if (!simshipOceanReady)
+            ImGui::EndDisabled();
         ImGui::Text("FPS (smoothed): %.0f", static_cast<double>(fpsShown));
         ImGui::Text("Sim time: %.2f s", static_cast<double>(simT));
         ImGui::Text("Wall dt (frame): %.4f s | smoothed (sim): %.4f s", static_cast<double>(rawFrame),
@@ -752,7 +766,10 @@ int main() {
             if (gCompareSwe)
                 gCompareSwe->dt = step;
 
-            updateBoat(boat, g, window, halfW, halfD, step, keyboardBoat, boatUseArrows);
+            const bool  useBigBoatBounds = useSimshipOcean && simshipOceanReady;
+            const float boatHalfW = useBigBoatBounds ? kBigOceanHalfExtentForBoat : halfW;
+            const float boatHalfD = useBigBoatBounds ? kBigOceanHalfExtentForBoat : halfD;
+            updateBoat(boat, g, window, boatHalfW, boatHalfD, step, keyboardBoat, boatUseArrows);
             applyBoatForcing(boat, g, halfW, halfD, step);
             if (kSplitCompareSwe && gCompareSwe) {
                 applyBoatForcing(boat, *gCompareSwe, halfW, halfD, step);
@@ -784,6 +801,133 @@ int main() {
             glm::mat4 viewRefl  = reflectionViewAcrossY(kReflectPlaneY, camEye, camTarget);
             glm::mat4 reflVP    = proj * viewRefl;
             glm::mat4 mvp       = proj * view;
+
+            if (useSimshipOcean && simshipOceanReady) {
+                glViewport(vpX, 0, vpW, frame.fbH);
+                skyboxDraw(skybox, proj, view);
+                glEnable(GL_DEPTH_TEST);
+
+                uploadWaterDepthTexture(grid, texH);
+                if (kRenderTerrainMesh && terrainProg) {
+                    glDisable(GL_BLEND);
+                    glDepthMask(GL_TRUE);
+                    glUseProgram(terrainProg);
+                    if (locTerrainMVP >= 0)
+                        glUniformMatrix4fv(locTerrainMVP, 1, GL_FALSE, glm::value_ptr(mvp));
+                    if (locTerrainLight >= 0)
+                        glUniform3fv(locTerrainLight, 1, glm::value_ptr(lightDir));
+                    if (locTerrainCam >= 0)
+                        glUniform3fv(locTerrainCam, 1, glm::value_ptr(camEye));
+                    if (locTerrainDx >= 0)
+                        glUniform1f(locTerrainDx, terrainFftDx);
+                    if (locTerrainHalfW >= 0)
+                        glUniform1f(locTerrainHalfW, terrainFftHalfW);
+                    if (locTerrainHalfD >= 0)
+                        glUniform1f(locTerrainHalfD, terrainFftHalfD);
+                    if (locTerrainUv >= 0)
+                        glUniform1f(locTerrainUv, kTerrainMaterialUvScale);
+                    glActiveTexture(GL_TEXTURE0);
+                    glBindTexture(GL_TEXTURE_2D, texB);
+                    if (locTerrainTexB >= 0)
+                        glUniform1i(locTerrainTexB, 0);
+                    glActiveTexture(GL_TEXTURE1);
+                    glBindTexture(GL_TEXTURE_2D, sandTex.albedo);
+                    if (locTerrainAlbedo >= 0)
+                        glUniform1i(locTerrainAlbedo, 1);
+                    glActiveTexture(GL_TEXTURE2);
+                    glBindTexture(GL_TEXTURE_2D, sandTex.normalGl);
+                    if (locTerrainNrm >= 0)
+                        glUniform1i(locTerrainNrm, 2);
+                    glActiveTexture(GL_TEXTURE3);
+                    glBindTexture(GL_TEXTURE_2D, sandTex.ao);
+                    if (locTerrainAO >= 0)
+                        glUniform1i(locTerrainAO, 3);
+                    glActiveTexture(GL_TEXTURE4);
+                    glBindTexture(GL_TEXTURE_2D, sandTex.roughness);
+                    if (locTerrainRough >= 0)
+                        glUniform1i(locTerrainRough, 4);
+                    glActiveTexture(GL_TEXTURE5);
+                    glBindTexture(GL_TEXTURE_2D, causticTex);
+                    if (locTerrainCaustic >= 0)
+                        glUniform1i(locTerrainCaustic, 5);
+                    if (locTerrainCausticTime >= 0)
+                        glUniform1f(locTerrainCausticTime, static_cast<float>(glfwGetTime()));
+                    if (locTerrainCausticWaveO >= 0) {
+                        const glm::vec2 cw = causticWaveUvOffsetFromWater(grid, kNx / 2, kNy / 2);
+                        glUniform2fv(locTerrainCausticWaveO, 1, glm::value_ptr(cw));
+                    }
+                    glActiveTexture(GL_TEXTURE6);
+                    glBindTexture(GL_TEXTURE_2D, texH);
+                    if (locTerrainH >= 0)
+                        glUniform1i(locTerrainH, 6);
+                    glActiveTexture(GL_TEXTURE0);
+                    glBindVertexArray(vao);
+                    glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(indices.size()), GL_UNSIGNED_INT, nullptr);
+                    glBindVertexArray(0);
+                }
+
+                fillBoatSolidMesh(boatVerts, boat);
+                if (boatProg) {
+                    glDisable(GL_BLEND);
+                    glDepthMask(GL_TRUE);
+                    glUseProgram(boatProg);
+                    glUniformMatrix4fv(locBoatMVP, 1, GL_FALSE, glm::value_ptr(mvp));
+                    glUniform3fv(locBoatLight, 1, glm::value_ptr(lightDir));
+                    const glm::vec3 hullColor(0.78f, 0.44f, 0.2f);
+                    glUniform3fv(locBoatColor, 1, glm::value_ptr(hullColor));
+                    if (locBoatClipRefl >= 0)
+                        glUniform1i(locBoatClipRefl, 0);
+                    if (locBoatWaterY >= 0)
+                        glUniform1f(locBoatWaterY, kReflectPlaneY);
+                    glBindVertexArray(boatVao);
+                    glBindBuffer(GL_ARRAY_BUFFER, boatVbo);
+                    glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(boatVerts.size() * sizeof(float)),
+                                    boatVerts.data());
+                    glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(boatVerts.size() / 6));
+                    glBindVertexArray(0);
+                }
+
+                ensureRefractTex(vpW, frame.fbH, refractColorTex, refractBufW, refractBufH);
+                if (refractColorTex) {
+                    glBindTexture(GL_TEXTURE_2D, refractColorTex);
+                    glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, vpX, 0, vpW, frame.fbH);
+                    glBindTexture(GL_TEXTURE_2D, 0);
+                }
+                ensureRefractDepthFbo(vpW, frame.fbH, refractDepthFbo, refractDepthTex, refractDepthBufW,
+                                      refractDepthBufH);
+                if (refractDepthFbo) {
+                    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+                    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, refractDepthFbo);
+                    glBlitFramebuffer(vpX, 0, vpX + vpW, frame.fbH, 0, 0, vpW, frame.fbH, GL_DEPTH_BUFFER_BIT,
+                                      GL_NEAREST);
+                    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+                }
+
+                SimshipOceanLighting oceanLight{};
+                oceanLight.sunDir        = lightDir;
+                oceanLight.sunColor      = glm::vec3(1.f, 0.98f, 0.92f);
+                oceanLight.exposure      = 1.0f;
+                oceanLight.waterLevel    = kEtaRef;
+                oceanLight.useEnvCubemap = skybox.cubemap != 0;
+                oceanLight.useScreenRefraction = refractColorTex != 0 && refractDepthTex != 0;
+                oceanLight.refractionTex = refractColorTex;
+                oceanLight.sceneDepthTex = refractDepthTex;
+                oceanLight.viewport      = glm::vec4(static_cast<float>(vpX), 0.f, static_cast<float>(vpW),
+                                                     static_cast<float>(frame.fbH));
+                oceanLight.viewRot       = glm::mat3(view);
+                oceanLight.clipNear      = kClipNear;
+                oceanLight.clipFar       = kClipFar;
+                oceanLight.depthAbsorb   = kDepthAbsorb;
+                oceanLight.refractionMaxOffset = kRefractionMaxOffset;
+                oceanLight.refractionLinTol    = kRefractionLinTol;
+                oceanLight.ior           = kWaterIOR;
+                oceanLight.waterColor    = kWaterColor;
+                oceanLight.waterReflections = kWaterReflections;
+                simshipOcean.uploadCoupledHeightfield(grid, kEtaRef);
+                simshipOcean.update(static_cast<float>(simT));
+                simshipOcean.render(view, proj, camEye, oceanLight);
+                return;
+            }
 
             uploadWaterDepthTexture(grid, texH);
             fillBoatSolidMesh(boatVerts, boat);
@@ -931,7 +1075,7 @@ int main() {
             if (locWaterAlpha >= 0)
                 glUniform1f(locWaterAlpha, kWaterAlpha);
             if (locWaterBodyLitOnly >= 0)
-                glUniform1i(locWaterBodyLitOnly, waterBodyLitOnly ? 1 : 0);
+                glUniform1i(locWaterBodyLitOnly, 0);
             if (locDx >= 0)
                 glUniform1f(locDx, kDx);
             if (locHalfW >= 0)
@@ -1044,9 +1188,7 @@ int main() {
             }
             char title[256];
             const char* gear = (boat.speed > 0.05f) ? "FWD" : (boat.speed < -0.05f) ? "REV" : "NEU";
-            const char* camStr = (sceneCam.mode == SceneCamMode::Orbital)   ? "orbit"
-                                 : (sceneCam.mode == SceneCamMode::Bridge) ? "bridge"
-                                                                           : "fly";
+            const char* camStr = (sceneCam.mode == SceneCamMode::Orbital) ? "orbit" : "fly";
             if (kSplitCompareSwe) {
                 std::snprintf(title, sizeof title,
                               "Coupled left | SWE right | %.0f FPS | %s | %.2f m/s (%s) | thr %.2f",
@@ -1060,6 +1202,7 @@ int main() {
         }
     }
 
+    simshipOcean.shutdown();
     skyboxShutdown(skybox);
 
     glDeleteProgram(prog);

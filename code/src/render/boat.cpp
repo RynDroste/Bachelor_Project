@@ -59,8 +59,8 @@ void worldToCellFrac(float x, float z, float halfW, float halfD, float dx, float
 
 }  // namespace
 
-void updateBoat(Boat& boat, Grid& g, GLFWwindow* window, float halfW, float halfD, float dt,
-                bool keyboardSteeringEnabled, bool useArrowKeysForSteering) {
+void updateBoat(Boat& boat, Grid& g, GLFWwindow* window, glm::vec2 sweCenterXZ, float halfW, float halfD,
+                float restEta, float dt, bool keyboardSteeringEnabled, bool useArrowKeysForSteering) {
     if (keyboardSteeringEnabled && window) {
         if (useArrowKeysForSteering) {
             if (glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS)
@@ -100,31 +100,23 @@ void updateBoat(Boat& boat, Grid& g, GLFWwindow* window, float halfW, float half
     boat.pos.x += c * boat.speed * dt;
     boat.pos.y += s * boat.speed * dt;
 
-    {
-        const float hL = boat.length * 0.5f;
-        const float hW = boat.width * 0.5f;
-        const float ext = std::sqrt(hL * hL + hW * hW);
-        const float pad = g.dx;
-        float xmin = -halfW + ext + pad;
-        float xmax = halfW - ext - pad;
-        float zmin = -halfD + ext + pad;
-        float zmax = halfD - ext - pad;
-        if (xmin > xmax)
-            xmin = xmax = 0.f;
-        if (zmin > zmax)
-            zmin = zmax = 0.f;
-        boat.pos.x = std::clamp(boat.pos.x, xmin, xmax);
-        boat.pos.y = std::clamp(boat.pos.y, zmin, zmax);
+    // Sample water height from SWE only if inside the (moving) simulation window.
+    const float localX = boat.pos.x - sweCenterXZ.x;
+    const float localZ = boat.pos.y - sweCenterXZ.y;
+    if (localX > -halfW && localX < halfW && localZ > -halfD && localZ < halfD) {
+        float cx, cy;
+        worldToCellFrac(localX, localZ, halfW, halfD, g.dx, cx, cy);
+        boat.z = bilinearCell(g, cx, cy, true);
+    } else {
+        boat.z = restEta;
     }
-
-    float cx, cy;
-    worldToCellFrac(boat.pos.x, boat.pos.y, halfW, halfD, g.dx, cx, cy);
-    boat.z = bilinearCell(g, cx, cy, true);
 }
 
-void applyBoatForcing(Boat& boat, Grid& g, float halfW, float halfD, float dt) {
-    // Keep the forcing inside the SWE simulation domain even if visual ocean is larger.
-    if (boat.pos.x < -halfW || boat.pos.x > halfW || boat.pos.y < -halfD || boat.pos.y > halfD)
+void applyBoatForcing(Boat& boat, Grid& g, glm::vec2 sweCenterXZ, float halfW, float halfD, float dt) {
+    // Convert to SWE-local coordinates; forcing only happens when the boat is inside the window.
+    const float localX = boat.pos.x - sweCenterXZ.x;
+    const float localZ = boat.pos.y - sweCenterXZ.y;
+    if (localX < -halfW || localX > halfW || localZ < -halfD || localZ > halfD)
         return;
 
     const float th = boat.heading;
@@ -134,8 +126,8 @@ void applyBoatForcing(Boat& boat, Grid& g, float halfW, float halfD, float dt) {
     if (vlen < 1e-4f)
         return;
 
-    const float cx = (boat.pos.x + halfW) / g.dx - 0.5f;
-    const float cy = (boat.pos.y + halfD) / g.dx - 0.5f;
+    const float cx = (localX + halfW) / g.dx - 0.5f;
+    const float cy = (localZ + halfD) / g.dx - 0.5f;
     const int ic = std::clamp(static_cast<int>(std::floor(cx)), 1, g.NX - 2);
     const int jc = std::clamp(static_cast<int>(std::floor(cy)), 1, g.NY - 2);
 

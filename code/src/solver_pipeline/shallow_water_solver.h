@@ -27,6 +27,14 @@ struct Grid {
     float  B(int i, int j) const;
 };
 
+// Shift the SWE state buffers by (di, dj) cells (integer grid units).
+// Semantics: the SWE domain centre is translated by (+di*dx, +dj*dx) in world space,
+// so the water column that used to live at local cell (i, j) now lives at (i - di, j - dj).
+// Cells that become "new" (i.e. were previously outside the domain) are filled with the rest state:
+//   H := restH, terrain := 0, Qx := 0, Qy := 0.
+// This makes the SWE act as a moving window around a target (e.g. the player boat).
+void gridSlideDomain(Grid& g, int di, int dj, float restH);
+
 void sweStepGpu(Grid& g);
 
 void sweApplyBoundaryConditionsGpu(Grid& g);

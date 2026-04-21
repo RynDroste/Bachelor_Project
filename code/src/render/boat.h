@@ -20,7 +20,12 @@ struct Boat {
     float rudder = 0.f;
 };
 
-void updateBoat(Boat& boat, Grid& g, GLFWwindow* window, float halfW, float halfD, float dt,
-                bool keyboardSteeringEnabled, bool useArrowKeysForSteering);
+// The boat lives in world space, but the SWE domain is a moving window centred at `sweCenterXZ`
+// with half-extents (halfW, halfD). The boat height (`boat.z`) is sampled from the SWE surface
+// when inside the window, and falls back to `restEta` otherwise. The boat is free to travel
+// beyond the SWE window (no clamp); only its interaction with the SWE grid is gated by the
+// window.
+void updateBoat(Boat& boat, Grid& g, GLFWwindow* window, glm::vec2 sweCenterXZ, float halfW, float halfD,
+                float restEta, float dt, bool keyboardSteeringEnabled, bool useArrowKeysForSteering);
 
-void applyBoatForcing(Boat& boat, Grid& g, float halfW, float halfD, float dt);
+void applyBoatForcing(Boat& boat, Grid& g, glm::vec2 sweCenterXZ, float halfW, float halfD, float dt);

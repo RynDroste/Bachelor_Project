@@ -13,7 +13,7 @@
 #include "render/scene_camera.h"
 #include "render/terrain_material.h"
 #include "render/shader_file.h"
-#include "render/big_surface.h"
+#include "render/clipmap_grid.h"
 #include "render/skybox.h"
 #include "solver_pipeline/shallow_water_solver.h"
 #include "solver_pipeline/wavedecomposer.h"
@@ -73,16 +73,42 @@ constexpr glm::vec3 kWaterEmissionColor(0.3f, 0.9f, 0.85f);
 constexpr float     kWaterEmissionStrength = 0.12f;
 constexpr float kWaterAlpha              = 0.76f;
 constexpr float kClipNear      = 0.1f;
-constexpr float kClipFar       = 500.f;
+constexpr float kClipFar       = 4000.f;
 constexpr float kDepthAbsorb   = 0.008f;
 constexpr float kRefractionMaxOffset = 0.06f;
 constexpr float kRefractionLinTol    = 0.12f;
-constexpr bool kRenderTerrainMesh = true;
+constexpr bool  kRenderTerrainMesh      = true;
 constexpr float kTerrainMaterialUvScale = 0.035f;
-constexpr bool  kTerrainMatchOceanInFftMode = true;
-constexpr float kFftOceanPatchSizeForMatch  = 100.0f;
-constexpr float kFftOceanPatchCountForMatch = 300.0f;
-constexpr float kBigOceanHalfExtentForBoat  = 0.5f * kFftOceanPatchSizeForMatch * kFftOceanPatchCountForMatch;
+
+// Geo-clipmap extending water+terrain out past the small SWE window.
+// Level 0 step matches the SWE cell (1 m), level 0 covers exactly the SWE
+// domain (2*N*d0 == kNx*kDx with N=128, d0=1.0). Each outer level doubles
+// the step and quadruples the footprint.
+constexpr int   kClipmapN           = 128;
+constexpr int   kClipmapL           = 5;    // level 4 covers 4096 m square (~> clipFar=500 m)
+constexpr float kClipmapBaseSpacing = kDx;
+
+// Cycle of distinct tint colors used to visualise clipmap levels at the seams.
+// Level 0 (solid innermost block) gets the first entry; outer rings cycle onward.
+static glm::vec3 clipmapLevelTint(int level) {
+    static const glm::vec3 kPalette[] = {
+        {1.00f, 0.28f, 0.28f},   // red
+        {0.30f, 1.00f, 0.35f},   // green
+        {0.30f, 0.55f, 1.00f},   // blue
+        {1.00f, 0.85f, 0.20f},   // yellow
+        {1.00f, 0.30f, 1.00f},   // magenta
+        {0.30f, 1.00f, 1.00f},   // cyan
+    };
+    constexpr int kPaletteSize = sizeof(kPalette) / sizeof(kPalette[0]);
+    return kPalette[((level % kPaletteSize) + kPaletteSize) % kPaletteSize];
+}
+
+// Moving-window SWE: the simulated 256 m x 256 m patch tracks the boat.
+// When the boat drifts farther than kSweSlideTrigger from the window centre on any
+// axis, we snap the window back to centre on the boat (quantised to dx). The trigger
+// should be a small fraction of halfW/halfD so the boat's wake region stays well inside
+// the window at all times.
+constexpr float kSweSlideTrigger = 24.f;  // metres
 
 GLuint compileShader(GLenum type, const char* src) {
     GLuint s = glCreateShader(type);
@@ -135,29 +161,21 @@ bool loadTerrainHeightmapRaw(const char* path, Grid& g) {
     return static_cast<size_t>(in.gcount()) == n * sizeof(float);
 }
 
-void buildWaterCornerIJ(int nx, int ny, std::vector<float>& out) {
-    const int vx = nx + 1;
-    const int vz = ny + 1;
-    out.resize(static_cast<size_t>(vx * vz * 2));
-    size_t k = 0;
-    for (int j = 0; j < vz; ++j) {
-        for (int i = 0; i < vx; ++i) {
-            out[k++] = static_cast<float>(i);
-            out[k++] = static_cast<float>(j);
-        }
-    }
-}
-
 void allocGridTextures(int nx, int ny, GLuint& texH, GLuint& texB) {
     glGenTextures(1, &texH);
     glGenTextures(1, &texB);
+    // CLAMP_TO_BORDER with 0 so clipmap geometry outside the SWE window reads
+    // H=0 and B=0 (flat riverbed) as a safe fallback. Shaders also guard with
+    // an explicit inSwe test; this border is a belt-and-suspenders default.
+    const float zeroBorder[4] = {0.f, 0.f, 0.f, 0.f};
     for (int pass = 0; pass < 2; ++pass) {
         const GLuint t = (pass == 0) ? texH : texB;
         glBindTexture(GL_TEXTURE_2D, t);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+        glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, zeroBorder);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F, nx, ny, 0, GL_RED, GL_FLOAT, nullptr);
     }
     glBindTexture(GL_TEXTURE_2D, 0);
@@ -173,26 +191,6 @@ void uploadWaterDepthTexture(const Grid& g, GLuint texH) {
     glBindTexture(GL_TEXTURE_2D, texH);
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, g.NX, g.NY, GL_RED, GL_FLOAT, g.h.data());
     glBindTexture(GL_TEXTURE_2D, 0);
-}
-
-void buildGridIndices(int nx, int ny, std::vector<unsigned>& idx) {
-    const int vx = nx + 1;
-    idx.clear();
-    idx.reserve(static_cast<size_t>(nx * ny * 6));
-    for (int j = 0; j < ny; ++j) {
-        for (int i = 0; i < nx; ++i) {
-            unsigned i0 = static_cast<unsigned>(i + j * vx);
-            unsigned i1 = i0 + 1u;
-            unsigned i2 = static_cast<unsigned>(i + (j + 1) * vx);
-            unsigned i3 = i2 + 1u;
-            idx.push_back(i0);
-            idx.push_back(i2);
-            idx.push_back(i1);
-            idx.push_back(i1);
-            idx.push_back(i2);
-            idx.push_back(i3);
-        }
-    }
 }
 
 struct FrameCtx {
@@ -484,14 +482,17 @@ int main() {
         (!terrainVs.empty() && !terrainFs.empty()) ? makeProgram(terrainVs.c_str(), terrainFs.c_str()) : 0u;
     if (kRenderTerrainMesh && !terrainProg)
         std::fprintf(stderr, "warning: terrain shaders missing (tried %s)\n", shaderPath("terrain.vert").c_str());
-    GLint locTerrainMVP    = terrainProg ? glGetUniformLocation(terrainProg, "uMVP") : -1;
-    GLint locTerrainLight  = terrainProg ? glGetUniformLocation(terrainProg, "uLightDir") : -1;
-    GLint locTerrainCam    = terrainProg ? glGetUniformLocation(terrainProg, "uCamPos") : -1;
-    GLint locTerrainDx     = terrainProg ? glGetUniformLocation(terrainProg, "uDx") : -1;
-    GLint locTerrainHalfW  = terrainProg ? glGetUniformLocation(terrainProg, "uHalfW") : -1;
-    GLint locTerrainHalfD  = terrainProg ? glGetUniformLocation(terrainProg, "uHalfD") : -1;
-    GLint locTerrainTexB   = terrainProg ? glGetUniformLocation(terrainProg, "uB") : -1;
-    GLint locTerrainUv     = terrainProg ? glGetUniformLocation(terrainProg, "uUvScale") : -1;
+    GLint locTerrainMVP          = terrainProg ? glGetUniformLocation(terrainProg, "uMVP") : -1;
+    GLint locTerrainLight        = terrainProg ? glGetUniformLocation(terrainProg, "uLightDir") : -1;
+    GLint locTerrainCam          = terrainProg ? glGetUniformLocation(terrainProg, "uCamPos") : -1;
+    GLint locTerrainDx           = terrainProg ? glGetUniformLocation(terrainProg, "uDx") : -1;
+    GLint locTerrainRingCenter   = terrainProg ? glGetUniformLocation(terrainProg, "uRingCenterXZ") : -1;
+    GLint locTerrainRingSpacing  = terrainProg ? glGetUniformLocation(terrainProg, "uRingSpacing") : -1;
+    GLint locTerrainSweCenter    = terrainProg ? glGetUniformLocation(terrainProg, "uSweCenterXZ") : -1;
+    GLint locTerrainSweHalfExt   = terrainProg ? glGetUniformLocation(terrainProg, "uSweHalfExtent") : -1;
+    GLint locTerrainDebugTint    = terrainProg ? glGetUniformLocation(terrainProg, "uDebugTint") : -1;
+    GLint locTerrainTexB         = terrainProg ? glGetUniformLocation(terrainProg, "uB") : -1;
+    GLint locTerrainUv           = terrainProg ? glGetUniformLocation(terrainProg, "uUvScale") : -1;
     GLint locTerrainAlbedo = terrainProg ? glGetUniformLocation(terrainProg, "uAlbedo") : -1;
     GLint locTerrainNrm    = terrainProg ? glGetUniformLocation(terrainProg, "uNormalMap") : -1;
     GLint locTerrainAO      = terrainProg ? glGetUniformLocation(terrainProg, "uAO") : -1;
@@ -509,6 +510,11 @@ int main() {
     GLint locDx = glGetUniformLocation(prog, "uDx");
     GLint locHalfW = glGetUniformLocation(prog, "uHalfW");
     GLint locHalfD = glGetUniformLocation(prog, "uHalfD");
+    GLint locWaterRingCenter   = glGetUniformLocation(prog, "uRingCenterXZ");
+    GLint locWaterRingSpacing  = glGetUniformLocation(prog, "uRingSpacing");
+    GLint locWaterSweCenter    = glGetUniformLocation(prog, "uSweCenterXZ");
+    GLint locWaterSweHalfExt   = glGetUniformLocation(prog, "uSweHalfExtent");
+    GLint locWaterDebugTint    = glGetUniformLocation(prog, "uDebugTint");
     GLint locTexH = glGetUniformLocation(prog, "uH");
     GLint locTexB = glGetUniformLocation(prog, "uB");
     GLint locReflTex = glGetUniformLocation(prog, "uReflectionTex");
@@ -561,10 +567,8 @@ int main() {
         airy = std::make_unique<AiryEWaveFFTW>(kNx, kNy, kDx);
     const float halfW = 0.5f * kNx * kDx;
     const float halfD = 0.5f * kNy * kDx;
-    const float terrainFftDx =
-        kTerrainMatchOceanInFftMode ? ((kFftOceanPatchSizeForMatch * kFftOceanPatchCountForMatch) / kNx) : kDx;
-    const float terrainFftHalfW = 0.5f * kNx * terrainFftDx;
-    const float terrainFftHalfD = 0.5f * kNy * terrainFftDx;
+    glm::vec2       sweCenterXZ(0.f, 0.f);
+    const glm::vec2 sweHalfExt(halfW, halfD);
 
     for (int j = 0; j < kNy; ++j) {
         for (int i = 0; i < kNx; ++i) {
@@ -575,11 +579,6 @@ int main() {
         }
     }
 
-    std::vector<unsigned> indices;
-    buildGridIndices(kNx, kNy, indices);
-    std::vector<float> waterCornerIJ;
-    buildWaterCornerIJ(kNx, kNy, waterCornerIJ);
-
     GLuint texH = 0, texB = 0;
     allocGridTextures(kNx, kNy, texH, texB);
     uploadTerrainTexture(g, texB);
@@ -589,21 +588,13 @@ int main() {
 
     GLuint causticTex = loadCausticTexture(BP_CAUSTIC_ROOT "/caustic anim_001.bmp.png");
 
-    GLuint vao = 0, vbo = 0, ebo = 0;
-    glGenVertexArrays(1, &vao);
-    glGenBuffers(1, &vbo);
-    glGenBuffers(1, &ebo);
-    glBindVertexArray(vao);
-    glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(waterCornerIJ.size() * sizeof(float)), waterCornerIJ.data(),
-                 GL_STATIC_DRAW);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER,
-                 static_cast<GLsizeiptr>(indices.size() * sizeof(unsigned)),
-                 indices.data(), GL_STATIC_DRAW);
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), reinterpret_cast<void*>(0));
-    glEnableVertexAttribArray(0);
-    glBindVertexArray(0);
+    ClipmapGrid clipmap{};
+    if (!clipmapGridInit(clipmap, kClipmapN, kClipmapL, kClipmapBaseSpacing)) {
+        std::fprintf(stderr, "clipmap init failed\n");
+        glfwDestroyWindow(window);
+        glfwTerminate();
+        return 1;
+    }
 
     std::string boatVs = loadTextFile(shaderPath("boat.vert"));
     std::string boatFs = loadTextFile(shaderPath("boat.frag"));
@@ -646,13 +637,8 @@ int main() {
     glm::vec3 lightDir = glm::normalize(glm::vec3(0.35f, 0.85f, 0.4f));
 
     Boat boat;
-    {
-        const float hL  = boat.length * 0.5f;
-        const float hW  = boat.width * 0.5f;
-        const float ext = std::sqrt(hL * hL + hW * hW);
-        const float pad = kDx;
-        boat.pos = glm::vec2(-halfW + ext + pad, 0.f);
-    }
+    // Spawn the boat at the SWE window centre so no initial slide is needed.
+    boat.pos     = glm::vec2(0.f, 0.f);
     boat.heading = 0.f;
     boat.throttle = 0.f;
     std::vector<float> boatVerts;
@@ -665,31 +651,13 @@ int main() {
     if (!skyboxInit(skybox, BP_SKYBOX_ROOT))
         std::fprintf(stderr, "warning: skybox disabled (check %s and shaders/skybox.*)\n", BP_SKYBOX_ROOT);
 
-    SimshipOcean simshipOcean;
-    bool         simshipOceanReady = false;
-    bool         useSimshipOcean   = true;
-    {
-        GLint glmaj = 0, glmin = 0;
-        glGetIntegerv(GL_MAJOR_VERSION, &glmaj);
-        glGetIntegerv(GL_MINOR_VERSION, &glmin);
-        if (glmaj < 4 || (glmaj == 4 && glmin < 3)) {
-            std::fprintf(stderr,
-                         "simship_ocean: need OpenGL 4.3+ (have %d.%d); FFT ocean disabled.\n",
-                         glmaj, glmin);
-        } else if (!skybox.cubemap) {
-            std::fprintf(stderr, "simship_ocean: skybox cubemap missing; FFT ocean disabled.\n");
-        } else if (!simshipOcean.init(skybox.cubemap)) {
-            std::fprintf(stderr, "simship_ocean: init failed (check shaders/simship_ocean/)\n");
-        } else
-            simshipOceanReady = true;
-    }
-
     double fpsPrevT = glfwGetTime();
     double wallPrev = fpsPrevT;
     float  fpsShown  = 0.f;
     double simT      = 0.0;
     bool   key1WasDown      = false;
     bool   key2WasDown      = false;
+    bool   debugClipmapTint = false;
 
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
@@ -731,15 +699,16 @@ int main() {
         if (ImGui::RadioButton("2 · Fly cam (WASD+E/Q; boat: arrow keys)", sceneCam.mode == SceneCamMode::Fps))
             sceneCam.setMode(SceneCamMode::Fps, boat);
         ImGui::Separator();
-        if (!simshipOceanReady)
-            ImGui::BeginDisabled();
-        ImGui::Checkbox("Big surface", &useSimshipOcean);
-        if (!simshipOceanReady)
-            ImGui::EndDisabled();
         ImGui::Text("FPS (smoothed): %.0f", static_cast<double>(fpsShown));
         ImGui::Text("Sim time: %.2f s", static_cast<double>(simT));
         ImGui::Text("Wall dt (frame): %.4f s | smoothed (sim): %.4f s", static_cast<double>(rawFrame),
                     static_cast<double>(simFrameDt));
+        ImGui::Separator();
+        ImGui::Checkbox("Tint clipmap levels", &debugClipmapTint);
+        if (debugClipmapTint) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("(L0 red, L1 green, L2 blue, L3 yellow, ...)");
+        }
         ImGui::Separator();
         ImGui::TextUnformatted("ImGui blocks camera / boat keys when interacting with UI.");
         ImGui::End();
@@ -766,13 +735,35 @@ int main() {
             if (gCompareSwe)
                 gCompareSwe->dt = step;
 
-            const bool  useBigBoatBounds = useSimshipOcean && simshipOceanReady;
-            const float boatHalfW = useBigBoatBounds ? kBigOceanHalfExtentForBoat : halfW;
-            const float boatHalfD = useBigBoatBounds ? kBigOceanHalfExtentForBoat : halfD;
-            updateBoat(boat, g, window, boatHalfW, boatHalfD, step, keyboardBoat, boatUseArrows);
-            applyBoatForcing(boat, g, halfW, halfD, step);
+            updateBoat(boat, g, window, sweCenterXZ, halfW, halfD, kEtaRef, step, keyboardBoat, boatUseArrows);
+
+            // Slide the SWE window so the boat always stays inside a central dead-zone.
+            {
+                const float dxRel = boat.pos.x - sweCenterXZ.x;
+                const float dzRel = boat.pos.y - sweCenterXZ.y;
+                if (std::abs(dxRel) > kSweSlideTrigger || std::abs(dzRel) > kSweSlideTrigger) {
+                    const int di = static_cast<int>(std::round(dxRel / kDx));
+                    const int dj = static_cast<int>(std::round(dzRel / kDx));
+                    if (di != 0 || dj != 0) {
+                        const float restH = std::max(0.f, kEtaRef);  // default bathymetry is 0, so H = eta
+                        gridSlideDomain(g, di, dj, restH);
+                        if (gCompareSwe)
+                            gridSlideDomain(*gCompareSwe, di, dj, restH);
+                        sweCenterXZ += glm::vec2(static_cast<float>(di) * kDx,
+                                                 static_cast<float>(dj) * kDx);
+                        // The Strang-splitting half-step buffer lives in SWE-local coordinates,
+                        // so after a window shift it no longer matches the current field; drop it.
+                        haveHtildePrevHalf = false;
+                        hTildePrevHalf.clear();
+                        // Terrain texture needs to be re-uploaded because its texels just shifted.
+                        uploadTerrainTexture(g, texB);
+                    }
+                }
+            }
+
+            applyBoatForcing(boat, g, sweCenterXZ, halfW, halfD, step);
             if (kSplitCompareSwe && gCompareSwe) {
-                applyBoatForcing(boat, *gCompareSwe, halfW, halfD, step);
+                applyBoatForcing(boat, *gCompareSwe, sweCenterXZ, halfW, halfD, step);
                 coupledSubstep(g, halfW, halfD, waveDec, *airy, hTildeSym, hTildePrevHalf, haveHtildePrevHalf,
                                kGradPenaltyD, 0.25f, kWaveDiffuseIters);
                 sweStepGpu(*gCompareSwe);
@@ -797,137 +788,10 @@ int main() {
             glm::lookAt(camEye, camTarget, glm::vec3(0.f, 1.f, 0.f));
 
         auto drawPane = [&](int vpX, int vpW, const Grid& grid, float aspect) {
-            glm::mat4 proj      = glm::perspective(glm::radians(kCamFovDeg), aspect, 0.1f, 500.f);
+            glm::mat4 proj      = glm::perspective(glm::radians(kCamFovDeg), aspect, kClipNear, kClipFar);
             glm::mat4 viewRefl  = reflectionViewAcrossY(kReflectPlaneY, camEye, camTarget);
             glm::mat4 reflVP    = proj * viewRefl;
             glm::mat4 mvp       = proj * view;
-
-            if (useSimshipOcean && simshipOceanReady) {
-                glViewport(vpX, 0, vpW, frame.fbH);
-                skyboxDraw(skybox, proj, view);
-                glEnable(GL_DEPTH_TEST);
-
-                uploadWaterDepthTexture(grid, texH);
-                if (kRenderTerrainMesh && terrainProg) {
-                    glDisable(GL_BLEND);
-                    glDepthMask(GL_TRUE);
-                    glUseProgram(terrainProg);
-                    if (locTerrainMVP >= 0)
-                        glUniformMatrix4fv(locTerrainMVP, 1, GL_FALSE, glm::value_ptr(mvp));
-                    if (locTerrainLight >= 0)
-                        glUniform3fv(locTerrainLight, 1, glm::value_ptr(lightDir));
-                    if (locTerrainCam >= 0)
-                        glUniform3fv(locTerrainCam, 1, glm::value_ptr(camEye));
-                    if (locTerrainDx >= 0)
-                        glUniform1f(locTerrainDx, terrainFftDx);
-                    if (locTerrainHalfW >= 0)
-                        glUniform1f(locTerrainHalfW, terrainFftHalfW);
-                    if (locTerrainHalfD >= 0)
-                        glUniform1f(locTerrainHalfD, terrainFftHalfD);
-                    if (locTerrainUv >= 0)
-                        glUniform1f(locTerrainUv, kTerrainMaterialUvScale);
-                    glActiveTexture(GL_TEXTURE0);
-                    glBindTexture(GL_TEXTURE_2D, texB);
-                    if (locTerrainTexB >= 0)
-                        glUniform1i(locTerrainTexB, 0);
-                    glActiveTexture(GL_TEXTURE1);
-                    glBindTexture(GL_TEXTURE_2D, sandTex.albedo);
-                    if (locTerrainAlbedo >= 0)
-                        glUniform1i(locTerrainAlbedo, 1);
-                    glActiveTexture(GL_TEXTURE2);
-                    glBindTexture(GL_TEXTURE_2D, sandTex.normalGl);
-                    if (locTerrainNrm >= 0)
-                        glUniform1i(locTerrainNrm, 2);
-                    glActiveTexture(GL_TEXTURE3);
-                    glBindTexture(GL_TEXTURE_2D, sandTex.ao);
-                    if (locTerrainAO >= 0)
-                        glUniform1i(locTerrainAO, 3);
-                    glActiveTexture(GL_TEXTURE4);
-                    glBindTexture(GL_TEXTURE_2D, sandTex.roughness);
-                    if (locTerrainRough >= 0)
-                        glUniform1i(locTerrainRough, 4);
-                    glActiveTexture(GL_TEXTURE5);
-                    glBindTexture(GL_TEXTURE_2D, causticTex);
-                    if (locTerrainCaustic >= 0)
-                        glUniform1i(locTerrainCaustic, 5);
-                    if (locTerrainCausticTime >= 0)
-                        glUniform1f(locTerrainCausticTime, static_cast<float>(glfwGetTime()));
-                    if (locTerrainCausticWaveO >= 0) {
-                        const glm::vec2 cw = causticWaveUvOffsetFromWater(grid, kNx / 2, kNy / 2);
-                        glUniform2fv(locTerrainCausticWaveO, 1, glm::value_ptr(cw));
-                    }
-                    glActiveTexture(GL_TEXTURE6);
-                    glBindTexture(GL_TEXTURE_2D, texH);
-                    if (locTerrainH >= 0)
-                        glUniform1i(locTerrainH, 6);
-                    glActiveTexture(GL_TEXTURE0);
-                    glBindVertexArray(vao);
-                    glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(indices.size()), GL_UNSIGNED_INT, nullptr);
-                    glBindVertexArray(0);
-                }
-
-                fillBoatSolidMesh(boatVerts, boat);
-                if (boatProg) {
-                    glDisable(GL_BLEND);
-                    glDepthMask(GL_TRUE);
-                    glUseProgram(boatProg);
-                    glUniformMatrix4fv(locBoatMVP, 1, GL_FALSE, glm::value_ptr(mvp));
-                    glUniform3fv(locBoatLight, 1, glm::value_ptr(lightDir));
-                    const glm::vec3 hullColor(0.78f, 0.44f, 0.2f);
-                    glUniform3fv(locBoatColor, 1, glm::value_ptr(hullColor));
-                    if (locBoatClipRefl >= 0)
-                        glUniform1i(locBoatClipRefl, 0);
-                    if (locBoatWaterY >= 0)
-                        glUniform1f(locBoatWaterY, kReflectPlaneY);
-                    glBindVertexArray(boatVao);
-                    glBindBuffer(GL_ARRAY_BUFFER, boatVbo);
-                    glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(boatVerts.size() * sizeof(float)),
-                                    boatVerts.data());
-                    glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(boatVerts.size() / 6));
-                    glBindVertexArray(0);
-                }
-
-                ensureRefractTex(vpW, frame.fbH, refractColorTex, refractBufW, refractBufH);
-                if (refractColorTex) {
-                    glBindTexture(GL_TEXTURE_2D, refractColorTex);
-                    glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, vpX, 0, vpW, frame.fbH);
-                    glBindTexture(GL_TEXTURE_2D, 0);
-                }
-                ensureRefractDepthFbo(vpW, frame.fbH, refractDepthFbo, refractDepthTex, refractDepthBufW,
-                                      refractDepthBufH);
-                if (refractDepthFbo) {
-                    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
-                    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, refractDepthFbo);
-                    glBlitFramebuffer(vpX, 0, vpX + vpW, frame.fbH, 0, 0, vpW, frame.fbH, GL_DEPTH_BUFFER_BIT,
-                                      GL_NEAREST);
-                    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-                }
-
-                SimshipOceanLighting oceanLight{};
-                oceanLight.sunDir        = lightDir;
-                oceanLight.sunColor      = glm::vec3(1.f, 0.98f, 0.92f);
-                oceanLight.exposure      = 1.0f;
-                oceanLight.waterLevel    = kEtaRef;
-                oceanLight.useEnvCubemap = skybox.cubemap != 0;
-                oceanLight.useScreenRefraction = refractColorTex != 0 && refractDepthTex != 0;
-                oceanLight.refractionTex = refractColorTex;
-                oceanLight.sceneDepthTex = refractDepthTex;
-                oceanLight.viewport      = glm::vec4(static_cast<float>(vpX), 0.f, static_cast<float>(vpW),
-                                                     static_cast<float>(frame.fbH));
-                oceanLight.viewRot       = glm::mat3(view);
-                oceanLight.clipNear      = kClipNear;
-                oceanLight.clipFar       = kClipFar;
-                oceanLight.depthAbsorb   = kDepthAbsorb;
-                oceanLight.refractionMaxOffset = kRefractionMaxOffset;
-                oceanLight.refractionLinTol    = kRefractionLinTol;
-                oceanLight.ior           = kWaterIOR;
-                oceanLight.waterColor    = kWaterColor;
-                oceanLight.waterReflections = kWaterReflections;
-                simshipOcean.uploadCoupledHeightfield(grid, kEtaRef);
-                simshipOcean.update(static_cast<float>(simT));
-                simshipOcean.render(view, proj, camEye, oceanLight);
-                return;
-            }
 
             uploadWaterDepthTexture(grid, texH);
             fillBoatSolidMesh(boatVerts, boat);
@@ -939,6 +803,10 @@ int main() {
                 glClearColor(0.04f, 0.06f, 0.1f, 1.f);
                 glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
                 glEnable(GL_DEPTH_TEST);
+
+                // Draw the skybox into the reflection target using the mirrored
+                // view so that water surfaces sample the real sky in reflection.
+                skyboxDraw(skybox, proj, viewRefl);
 
                 if (boatProg) {
                     glUseProgram(boatProg);
@@ -980,10 +848,10 @@ int main() {
                     glUniform3fv(locTerrainCam, 1, glm::value_ptr(camEye));
                 if (locTerrainDx >= 0)
                     glUniform1f(locTerrainDx, kDx);
-                if (locTerrainHalfW >= 0)
-                    glUniform1f(locTerrainHalfW, halfW);
-                if (locTerrainHalfD >= 0)
-                    glUniform1f(locTerrainHalfD, halfD);
+                if (locTerrainSweCenter >= 0)
+                    glUniform2fv(locTerrainSweCenter, 1, glm::value_ptr(sweCenterXZ));
+                if (locTerrainSweHalfExt >= 0)
+                    glUniform2fv(locTerrainSweHalfExt, 1, glm::value_ptr(sweHalfExt));
                 if (locTerrainUv >= 0)
                     glUniform1f(locTerrainUv, kTerrainMaterialUvScale);
                 glActiveTexture(GL_TEXTURE0);
@@ -1021,9 +889,22 @@ int main() {
                 if (locTerrainH >= 0)
                     glUniform1i(locTerrainH, 6);
                 glActiveTexture(GL_TEXTURE0);
-                glBindVertexArray(vao);
-                glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(indices.size()), GL_UNSIGNED_INT, nullptr);
-                glBindVertexArray(0);
+                const glm::vec2 camXZ(camEye.x, camEye.z);
+                // All levels share one snap center so that ring boundaries meet
+                // exactly; otherwise per-level snap differences open visible cracks.
+                const glm::vec2 sharedCenter = clipmapSharedCenter(camXZ, clipmap);
+                for (int l = 0; l < clipmap.L; ++l) {
+                    const float spacing = clipmapLevelSpacing(clipmap, l);
+                    if (locTerrainRingCenter >= 0)
+                        glUniform2fv(locTerrainRingCenter, 1, glm::value_ptr(sharedCenter));
+                    if (locTerrainRingSpacing >= 0)
+                        glUniform1f(locTerrainRingSpacing, spacing);
+                    if (locTerrainDebugTint >= 0) {
+                        glm::vec3 tint = debugClipmapTint ? clipmapLevelTint(l) : glm::vec3(0.f);
+                        glUniform3fv(locTerrainDebugTint, 1, glm::value_ptr(tint));
+                    }
+                    clipmapGridDrawLevel(clipmap, l);
+                }
             }
 
             ensureRefractTex(vpW, frame.fbH, refractColorTex, refractBufW, refractBufH);
@@ -1082,6 +963,10 @@ int main() {
                 glUniform1f(locHalfW, halfW);
             if (locHalfD >= 0)
                 glUniform1f(locHalfD, halfD);
+            if (locWaterSweCenter >= 0)
+                glUniform2fv(locWaterSweCenter, 1, glm::value_ptr(sweCenterXZ));
+            if (locWaterSweHalfExt >= 0)
+                glUniform2fv(locWaterSweHalfExt, 1, glm::value_ptr(sweHalfExt));
             if (locWetEps >= 0)
                 glUniform1f(locWetEps, kWetDepthEps);
             if (locEtaRefU >= 0)
@@ -1147,9 +1032,22 @@ int main() {
                 glUniform1i(locSceneDepth, 4);
             glActiveTexture(GL_TEXTURE0);
 
-            glBindVertexArray(vao);
-            glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(indices.size()), GL_UNSIGNED_INT, nullptr);
-            glBindVertexArray(0);
+            {
+                const glm::vec2 camXZ(camEye.x, camEye.z);
+                const glm::vec2 sharedCenter = clipmapSharedCenter(camXZ, clipmap);
+                for (int l = 0; l < clipmap.L; ++l) {
+                    const float spacing = clipmapLevelSpacing(clipmap, l);
+                    if (locWaterRingCenter >= 0)
+                        glUniform2fv(locWaterRingCenter, 1, glm::value_ptr(sharedCenter));
+                    if (locWaterRingSpacing >= 0)
+                        glUniform1f(locWaterRingSpacing, spacing);
+                    if (locWaterDebugTint >= 0) {
+                        glm::vec3 tint = debugClipmapTint ? clipmapLevelTint(l) : glm::vec3(0.f);
+                        glUniform3fv(locWaterDebugTint, 1, glm::value_ptr(tint));
+                    }
+                    clipmapGridDrawLevel(clipmap, l);
+                }
+            }
 
             glDepthMask(GL_TRUE);
             glDisable(GL_BLEND);
@@ -1202,7 +1100,7 @@ int main() {
         }
     }
 
-    simshipOcean.shutdown();
+    clipmapGridShutdown(clipmap);
     skyboxShutdown(skybox);
 
     glDeleteProgram(prog);
@@ -1228,9 +1126,6 @@ int main() {
     }
     glDeleteBuffers(1, &boatVbo);
     glDeleteVertexArrays(1, &boatVao);
-    glDeleteBuffers(1, &vbo);
-    glDeleteBuffers(1, &ebo);
-    glDeleteVertexArrays(1, &vao);
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();

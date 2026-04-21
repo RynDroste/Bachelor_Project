@@ -32,6 +32,8 @@ uniform float uWaveStrength;
 uniform float uWaterAnimation;
 uniform vec3 uEmissionColor;
 uniform float uEmissionStrength;
+// Debug clipmap-level tint (vec3(0) = disabled).
+uniform vec3 uDebugTint;
 out vec4 FragColor;
 
 const float PI = 3.14159265;
@@ -232,17 +234,28 @@ vec3 hammonDiffuse(vec3 N, vec3 L, vec3 V, vec3 albedo, float roughness) {
 }
 
 void main() {
+    // Clipmap geometry covers a far larger footprint than the SWE window; the
+    // shader must gracefully handle pixels that fall outside that window.
+    // Inside: sample uH/uB like before. Outside: treat the world as deep,
+    // flat-bedded open water (B=0) so the lighting still looks like deep
+    // water instead of discarding the fragment.
     ivec2 sz = textureSize(uH, 0);
     vec2 uv = vec2(
         (vWorldPos.x + uHalfW) / (float(sz.x) * uDx),
         (vWorldPos.z + uHalfD) / (float(sz.y) * uDx));
-    if (any(lessThan(uv, vec2(0.0))) || any(greaterThanEqual(uv, vec2(1.0))))
-        discard;
-    float hCell = texture(uH, uv).r;
-    if (max(hCell, 0.0) < uWetDepthEps)
-        discard;
+    bool inSwe = all(greaterThanEqual(uv, vec2(0.0))) &&
+                 all(lessThan(uv, vec2(1.0)));
+    vec2 uvC = clamp(uv, vec2(0.0), vec2(0.9999));
 
-    float bTerrain = texture(uB, uv).r;
+    float bTerrain;
+    if (inSwe) {
+        float hCell = texture(uH, uvC).r;
+        if (max(hCell, 0.0) < uWetDepthEps)
+            discard;  // still clip out "dry" SWE cells (land, beach)
+        bTerrain = texture(uB, uvC).r;
+    } else {
+        bTerrain = 0.0;  // flat riverbed default outside SWE
+    }
     float surfaceToBed = max(vWorldPos.y - bTerrain, 0.0);
     float depthNorm = clamp(surfaceToBed / kDepthCurveMax, 0.0, 1.0);
     float depthFactor = pow(depthNorm, kDepthCurvePow);
@@ -256,7 +269,7 @@ void main() {
     vec3 N = normalize(cross(nx, ny));
     float W = uTime * uWaterAnimation;
     N = waterWavesNormal(vWorldPos, N, W);
-    {
+    if (inSwe) {
         float cellDu = 1.0 / float(sz.x);
         float cellDv = 1.0 / float(sz.y);
         vec2 uxp = clamp(uv + vec2(cellDu, 0.0), vec2(0.001), vec2(0.999));
@@ -314,7 +327,10 @@ void main() {
     vec3 emission = uEmissionColor * uEmissionStrength * (0.6 + 0.4 * edgeMask) * shallowMask;
 
     if (uWaterBodyLitOnly != 0) {
-        FragColor = vec4(bodyLit + spec + emission + sss, waterAlpha);
+        vec3 dbg = bodyLit + spec + emission + sss;
+        if (dot(uDebugTint, uDebugTint) > 1e-6)
+            dbg = mix(dbg, uDebugTint, 0.55);
+        FragColor = vec4(dbg, waterAlpha);
         return;
     }
 
@@ -339,6 +355,9 @@ void main() {
     vec3 glass = glassBSDF(N, V, screenUV, refractOff, planar, reflOk, gl_FragCoord.z, base);
 
     vec3 rgb = bodyLit + spec + glass + emission + sss;
+
+    if (dot(uDebugTint, uDebugTint) > 1e-6)
+        rgb = mix(rgb, uDebugTint, 0.55);
 
     FragColor = vec4(rgb, waterAlpha);
 }

@@ -2,6 +2,7 @@
 in vec3 vWorldPos;
 in float vDepth;
 in float vGerstnerPeak;
+in float vSweEdge;
 uniform vec3 uLightDir;
 uniform vec3 uCameraPos;
 uniform sampler2D uReflectionTex;
@@ -247,14 +248,15 @@ void main() {
                  all(lessThan(uv, vec2(1.0)));
     vec2 uvC = clamp(uv, vec2(0.0), vec2(0.9999));
 
-    float bTerrain;
+    float bTerrain = 0.0;
     if (inSwe) {
         float hCell = texture(uH, uvC).r;
-        if (max(hCell, 0.0) < uWetDepthEps)
-            discard;  // still clip out "dry" SWE cells (land, beach)
-        bTerrain = texture(uB, uvC).r;
-    } else {
-        bTerrain = 0.0;  // flat riverbed default outside SWE
+        // Only discard well inside the window; near the boundary we feather
+        // instead of clipping so the edge stays continuous.
+        if (vSweEdge > 0.999 && max(hCell, 0.0) < uWetDepthEps)
+            discard;
+        float bSampled = texture(uB, uvC).r;
+        bTerrain = mix(0.0, bSampled, vSweEdge);
     }
     float surfaceToBed = max(vWorldPos.y - bTerrain, 0.0);
     float depthNorm = clamp(surfaceToBed / kDepthCurveMax, 0.0, 1.0);
@@ -269,7 +271,7 @@ void main() {
     vec3 N = normalize(cross(nx, ny));
     float W = uTime * uWaterAnimation;
     N = waterWavesNormal(vWorldPos, N, W);
-    if (inSwe) {
+    if (vSweEdge > 1e-3) {
         float cellDu = 1.0 / float(sz.x);
         float cellDv = 1.0 / float(sz.y);
         vec2 uxp = clamp(uv + vec2(cellDu, 0.0), vec2(0.001), vec2(0.999));
@@ -279,7 +281,7 @@ void main() {
         float dhdx = (texture(uH, uxp).r - texture(uH, uxm).r) / (2.0 * uDx);
         float dhdz = (texture(uH, uyp).r - texture(uH, uym).r) / (2.0 * uDx);
         vec3 Nswe = normalize(vec3(-dhdx * kSweHNormalStr, 1.0, -dhdz * kSweHNormalStr));
-        N = normalize(mix(N, Nswe, kSweHNormalMix));
+        N = normalize(mix(N, Nswe, kSweHNormalMix * vSweEdge));
     }
     vec3 V = normalize(uCameraPos - vWorldPos);
     vec3 L = normalize(uLightDir);

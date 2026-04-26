@@ -25,6 +25,9 @@ uniform float uGerstnerWeight;
 out vec3  vWorldPos;
 out float vDepth;
 out float vGerstnerPeak;
+// 1 = fully inside SWE window, 0 = outside, with smooth ramp in a feather band
+// next to the boundary so visual properties (η, depth, normals) cross-fade.
+out float vSweEdge;
 
 const float PI = 3.14159265;
 const float G  = 9.81;
@@ -52,13 +55,25 @@ void main() {
     vec2  swePos = (worldXZ - uSweCenterXZ) / (2.0 * halfExt) + 0.5;
 
     float y     = uEtaRef;   // rest ocean level outside the SWE window
-    float hAvg  = 0.0;
+    float hAvg  = uEtaRef;   // default depth = rest η (assumes B≈0 outside),
+                              // so any SWE-derived contribution feathers cleanly
+                              // back to the open-water value at the boundary.
 
     // A few-texel padding so we don't sample garbage right at the border.
     vec2 uvMin = vec2(0.0);
     vec2 uvMax = vec2(1.0);
     bool inSwe = all(greaterThanEqual(swePos, uvMin)) &&
                  all(lessThanEqual(swePos,   uvMax));
+
+    // Smooth feather: 0 outside the window, ramps up to 1 over a thin band
+    // (kFeatherFrac of the half-extent) near each edge. With halfExtent=128 m
+    // and kFeatherFrac=0.08 the band is ~10 m wide.
+    const float kFeatherFrac = 0.08;
+    vec2  edgeDist01 = max(min(swePos, vec2(1.0) - swePos), vec2(0.0));
+    float edgeMin    = min(edgeDist01.x, edgeDist01.y);
+    float sweEdgeRaw = inSwe ? clamp(edgeMin / kFeatherFrac, 0.0, 1.0) : 0.0;
+    float sweEdge    = sweEdgeRaw * sweEdgeRaw * (3.0 - 2.0 * sweEdgeRaw);
+    vSweEdge = sweEdge;
 
     if (inSwe) {
         // Corresponding cell-center ivec2 in the SWE texture:
@@ -93,22 +108,32 @@ void main() {
 
         if (sumW > 1e-6) {
             float ySampled = sumSurf / sumW;
-            hAvg = sumH / sumW;
+            float hSampled = sumH / sumW;
             float shoreBlend = uShoreBlendRange > 1e-6
-                ? clamp(hAvg / uShoreBlendRange, 0.0, 1.0)
+                ? clamp(hSampled / uShoreBlendRange, 0.0, 1.0)
                 : 1.0;
-            y = mix(uEtaRef, ySampled, shoreBlend);
+            y    = mix(uEtaRef, ySampled, shoreBlend);
+            hAvg = mix(uEtaRef, hSampled, shoreBlend);
         }
     }
 
+    // Edge feather: smoothly fade SWE-derived height/depth back to the open-water
+    // values (uEtaRef) so the window boundary itself is invisible.
+    y    = mix(uEtaRef, y,    sweEdge);
+    hAvg = mix(uEtaRef, hAvg, sweEdge);
+
     // Gerstner aesthetic waves, applied everywhere (they read from world XZ).
     float gMask = clamp(uGerstnerWeight, 0.0, 1.0);
-    if (inSwe) {
+    {
+        // Inside the SWE window we dampen Gerstner on dry/shallow cells; the
+        // damping is ramped in via sweEdge so it cannot create a step at the
+        // boundary itself.
         float shoreBlend = uShoreBlendRange > 1e-6
             ? clamp(hAvg / uShoreBlendRange, 0.0, 1.0)
             : 1.0;
         float wetGerst = smoothstep(uWetDepthEps * 0.25, uWetDepthEps * 2.5, max(hAvg, 0.0));
-        gMask *= mix(1.0, wetGerst * shoreBlend, 1.0);  // inside SWE: dampen on dry cells
+        float dampInside = wetGerst * shoreBlend;
+        gMask *= mix(1.0, dampInside, sweEdge);
     }
 
     vec3 gDisp = vec3(0.0);

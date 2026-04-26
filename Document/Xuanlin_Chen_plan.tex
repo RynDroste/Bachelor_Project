@@ -6,6 +6,7 @@
 \usepackage{tabularx}
 \usepackage{booktabs}
 \usepackage{array}
+\usepackage{longtable}
 \geometry{margin=1in}
 \setstretch{1.25}
 \setlength{\parindent}{2em}
@@ -30,26 +31,37 @@
 This project aims to simulate water-surface behavior by numerically solving the shallow water equations (SWE). It focuses on dynamic fluctuations, user interaction, and real-time rendering for large-scale water scenes while preserving physical plausibility.
 
 \section*{Work Plan}
-\begin{table}[h]
-\centering
 \renewcommand{\arraystretch}{1.2}
-\begin{tabularx}{\textwidth}{>{\centering\arraybackslash}p{1cm} X X X}
+\begin{longtable}{>{\centering\arraybackslash}p{1cm} p{4.5cm} p{6cm} p{2.8cm}}
 \toprule
 \textbf{Week} & \textbf{Planned Activity} & \textbf{Expected Result} & \textbf{Current Status} \\
 \midrule
-W1 & Setup environment and basic shaders & The screen can render a static plane with simple colors. & Not started \\
-W2 & Implement SWE base update cycle & The fundamental changes in the height field can be observed. & Not started \\
-W3 & Staggered grid \& advection implementation & Stable fluid motion & Not started \\
-W4 & CFL condition \& fluctuation handling & Numerically stable simulation & Not started \\
-W5 & Blinn-Phong shading implementation & Giving the waveform a sense of depth and light and shadow feedback. & Not started \\
-W6 & Real-time vertex height displacement & Dynamic water mesh & Not started \\
-W7 & Implement Boundary conditions & Constrained fluid behavior & Not started \\
-W8 & Environment mapping \& Fresnel effect & Enhanced water aesthetics & Not started \\
-W9 & Solid-fluid coupling & Interaction with dynamic objects & Not started \\
-W10 & Particle system / Foam map & Visual detail enrichment & Not started \\
-W11 & Performance optimization & Real-time frame rate stability & Not started \\
-W12 & Final documentation & Completed Thesis Report & Not started \\
+\endfirsthead
+
+\toprule
+\textbf{Week} & \textbf{Planned Activity} & \textbf{Expected Result} & \textbf{Current Status} \\
+\midrule
+\endhead
+
+\midrule
+\multicolumn{4}{r}{\small Continued on next page} \\
+\endfoot
+
 \bottomrule
-\end{tabularx}
-\end{table}
+\endlastfoot
+
+W1 & Setup environment and basic shaders & The screen can render a static plane with simple colors. & Completed \\
+W2 & Implement SWE base update cycle & The fundamental changes in the height field can be observed. & Completed. Add a linear solver in pipelines \\
+W3 & Staggered grid \& advection implementation & Stable fluid motion & Completed \\
+W4 & CFL condition \& fluctuation handling & Numerically stable simulation & Completed (While stability cannot maintain in wet-dry boundary conditions.) \\
+W5 & Blinn-Phong shading implementation & Giving the waveform a sense of depth and light and shadow feedback. & Completed with PBR instead. \\
+W6 & Real-time vertex height displacement & Dynamic water mesh & Completed\\
+W7 & Implement Boundary conditions & Constrained fluid behavior & Cancelled(now merge with W4) \\
+W7 & Impement the clipmap. &To reduce FPS load, so resolutions will change according to the distance to camera. & Completed.(New target) \\
+W8 & Environment mapping \& Fresnel effect & Enhanced water aesthetics & Completed(using cubemap for skybox now, may change in May) \\
+W9 & Solid-fluid coupling & Interaction with dynamic objects & In progress (now can simply interact with a boat.) \\
+W10 & Particle system / Foam map & Visual detail enrichment & Planned in May.\\
+W11 & Performance optimization & Real-time frame rate stability & Planned in May. \\
+W12 & Final documentation & Completed Thesis Report & Planned.\\
+\end{longtable}
 \end{document}

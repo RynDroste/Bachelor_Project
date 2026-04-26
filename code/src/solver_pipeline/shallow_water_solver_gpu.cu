@@ -34,45 +34,22 @@ constexpr float kDryEps    = 1e-3f;
 constexpr float kCflFactor = 75.f;
 constexpr float kCflWave   = 0.8f;
 
+// All buffers (h, b, qx, qy) are now N*N cell-centered. qx[c] is the momentum
+// at the RIGHT face of cell (i,j) (between cells (i,j) and (i+1,j)); qy[c] is
+// the momentum at the TOP face of cell (i,j). The right face of cell (NX-1, j)
+// is the right wall (forced to 0); the left face of cell (0, j) is the left
+// wall and is not stored. Symmetric for top/bottom in y.
 __device__ __forceinline__ int idxH(int i, int j, int nx) { return i + j * nx; }
-__device__ __forceinline__ int idxQX(int i, int j, int nx) { return i + j * (nx + 1); }
-__device__ __forceinline__ int idxQY(int i, int j, int nx) { return i + j * nx; }
+
+__device__ __forceinline__ int clamp_x_d(int i, int nx) {
+    return i < 0 ? 0 : (i >= nx ? nx - 1 : i);
+}
+__device__ __forceinline__ int clamp_y_d(int j, int ny) {
+    return j < 0 ? 0 : (j >= ny ? ny - 1 : j);
+}
 
 __device__ __forceinline__ float clampf(float x, float lo, float hi) {
     return fminf(hi, fmaxf(lo, x));
-}
-
-__device__ __forceinline__ float faceH_X_d(const float* h, const float* qx, int nx, int ny, int i, int j) {
-    const int il = max(0, i - 1);
-    const int ir = min(nx - 1, i);
-    (void)ny;
-    const float q = qx[idxQX(i, j, nx)];
-    return (q >= 0.f) ? h[idxH(il, j, nx)] : h[idxH(ir, j, nx)];
-}
-
-__device__ __forceinline__ float faceH_Y_d(const float* h, const float* qy, int nx, int ny, int i, int j) {
-    const int jd = max(0, j - 1);
-    const int ju = min(ny - 1, j);
-    const float q = qy[idxQY(i, j, nx)];
-    return (q >= 0.f) ? h[idxH(i, jd, nx)] : h[idxH(i, ju, nx)];
-}
-
-__device__ __forceinline__ float uX_d(const float* h, const float* qx, int nx, int ny, int i, int j) {
-    const float hf = faceH_X_d(h, qx, nx, ny, i, j);
-    return (hf < kDryEps) ? 0.f : qx[idxQX(i, j, nx)] / hf;
-}
-
-__device__ __forceinline__ float uY_d(const float* h, const float* qy, int nx, int ny, int i, int j) {
-    const float hf = faceH_Y_d(h, qy, nx, ny, i, j);
-    return (hf < kDryEps) ? 0.f : qy[idxQY(i, j, nx)] / hf;
-}
-
-__device__ __forceinline__ float avgQX_d(const float* qx, int nx, int i, int j) {
-    return 0.5f * (qx[idxQX(i, j, nx)] + qx[idxQX(i + 1, j, nx)]);
-}
-
-__device__ __forceinline__ float avgQY_d(const float* qy, int nx, int i, int j) {
-    return 0.5f * (qy[idxQY(i, j, nx)] + qy[idxQY(i, j + 1, nx)]);
 }
 
 __device__ __forceinline__ float faceSpeedCap_d(float hf, float dx, float dt) {
@@ -82,159 +59,237 @@ __device__ __forceinline__ float faceSpeedCap_d(float hf, float dx, float dt) {
     return fminf(u_adv, fmaxf(u_wave, 0.f));
 }
 
+// Sign-upwinded velocity at the right face of cell (i,j): u = qx[c] / h_upwind,
+// where h_upwind picks h[c] on positive flow and h[cell-to-the-right] on negative
+// flow. Mirrors Sim2D's kernel_qbar_to_ubar_x semantics with replicate clamping.
+__device__ __forceinline__ float u_at_face_x_d(const float* qx, const float* h, int nx, int i, int j) {
+    const int   c   = idxH(i, j, nx);
+    const int   cxp = idxH(clamp_x_d(i + 1, nx), j, nx);
+    const float q   = qx[c];
+    return (q >= 0.f) ? q / fmaxf(kDryEps, h[c]) : q / fmaxf(kDryEps, h[cxp]);
+}
+
+__device__ __forceinline__ float u_at_face_y_d(const float* qy, const float* h, int nx, int ny, int i, int j) {
+    const int   c   = idxH(i, j, nx);
+    const int   cyp = idxH(i, clamp_y_d(j + 1, ny), nx);
+    const float q   = qy[c];
+    return (q >= 0.f) ? q / fmaxf(kDryEps, h[c]) : q / fmaxf(kDryEps, h[cyp]);
+}
+
 __global__ void bc_domain_qx_k(float* qx, int nx, int ny) {
     const int j = blockIdx.x * blockDim.x + threadIdx.x;
     if (j >= ny)
         return;
-    qx[idxQX(0, j, nx)]  = 0.f;
-    qx[idxQX(nx, j, nx)] = 0.f;
+    qx[idxH(nx - 1, j, nx)] = 0.f;
 }
 
 __global__ void bc_domain_qy_k(float* qy, int nx, int ny) {
     const int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= nx)
         return;
-    qy[idxQY(i, 0, nx)]  = 0.f;
-    qy[idxQY(i, ny, nx)] = 0.f;
+    qy[idxH(i, ny - 1, nx)] = 0.f;
 }
 
 __global__ void bc_terrain_qx_k(float* qx, const float* h, const float* terrain, int nx, int ny) {
     const int i = blockIdx.x * blockDim.x + threadIdx.x;
     const int j = blockIdx.y * blockDim.y + threadIdx.y;
-    if (i <= 0 || i >= nx || j >= ny)
+    if (i >= nx - 1 || j >= ny)
         return;
-    const float bmax = fmaxf(terrain[idxH(i - 1, j, nx)], terrain[idxH(i, j, nx)]);
-    const float wL   = terrain[idxH(i - 1, j, nx)] + h[idxH(i - 1, j, nx)];
-    const float wR   = terrain[idxH(i, j, nx)] + h[idxH(i, j, nx)];
+    const int   c    = idxH(i, j, nx);
+    const int   cxp  = idxH(i + 1, j, nx);
+    const float bmax = fmaxf(terrain[c], terrain[cxp]);
+    const float wL   = terrain[c]   + h[c];
+    const float wR   = terrain[cxp] + h[cxp];
     if (bmax >= fminf(wL, wR) - kDryEps)
-        qx[idxQX(i, j, nx)] = 0.f;
+        qx[c] = 0.f;
 }
 
 __global__ void bc_terrain_qy_k(float* qy, const float* h, const float* terrain, int nx, int ny) {
     const int i = blockIdx.x * blockDim.x + threadIdx.x;
     const int j = blockIdx.y * blockDim.y + threadIdx.y;
-    if (i >= nx || j <= 0 || j >= ny)
+    if (i >= nx || j >= ny - 1)
         return;
-    const float bmax = fmaxf(terrain[idxH(i, j - 1, nx)], terrain[idxH(i, j, nx)]);
-    const float wD   = terrain[idxH(i, j - 1, nx)] + h[idxH(i, j - 1, nx)];
-    const float wU   = terrain[idxH(i, j, nx)] + h[idxH(i, j, nx)];
+    const int   c    = idxH(i, j, nx);
+    const int   cyp  = idxH(i, j + 1, nx);
+    const float bmax = fmaxf(terrain[c], terrain[cyp]);
+    const float wD   = terrain[c]   + h[c];
+    const float wU   = terrain[cyp] + h[cyp];
     if (bmax >= fminf(wD, wU) - kDryEps)
-        qy[idxQY(i, j, nx)] = 0.f;
+        qy[c] = 0.f;
 }
 
+// Stelling-Duinmeijer momentum update (Sim2D.cu kernel_swe_momentum_x), ported
+// to our cell-centered q convention. The control volume for qx[c] is centred
+// on the right face of cell (i,j) and spans cells (i,j) and (i+1,j) in x and
+// rows j-1, j, j+1 in y. Closed-wall replicate via clamp_x_d / clamp_y_d.
 __global__ void step_qx_k(const float* h, const float* b, const float* qx, const float* qy, float* qx_out, int nx,
                           int ny, float dx, float dt) {
     const int i = blockIdx.x * blockDim.x + threadIdx.x;
     const int j = blockIdx.y * blockDim.y + threadIdx.y;
-    if (i >= nx + 1 || j >= ny)
+    if (i >= nx || j >= ny)
         return;
 
-    qx_out[idxQX(i, j, nx)] = qx[idxQX(i, j, nx)];
-    if (i <= 0 || i >= nx)
-        return;
+    const int c = idxH(i, j, nx);
+    qx_out[c]   = qx[c];
 
-    const float hf = faceH_X_d(h, qx, nx, ny, i, j);
-    if (hf < kDryEps) {
-        qx_out[idxQX(i, j, nx)] = 0.f;
+    if (i >= nx - 1) {
+        qx_out[c] = 0.f;
         return;
     }
 
-    const float umax = faceSpeedCap_d(hf, dx, dt);
-    const float u    = uX_d(h, qx, nx, ny, i, j);
+    const int cxp = idxH(i + 1, j, nx);
 
-    const float qx_avg = avgQX_d(qx, nx, i - 1, j);
-    float du_dx;
-    if (qx_avg >= 0.f)
-        du_dx = (u - uX_d(h, qx, nx, ny, i - 1, j)) / dx;
-    else
-        du_dx = (uX_d(h, qx, nx, ny, i + 1, j) - u) / dx;
-
-    const float qy_mid = 0.5f * (qy[idxQY(max(0, i - 1), j, nx)] + qy[idxQY(min(nx - 1, i), j, nx)]);
-    float du_dy;
-    if (qy_mid >= 0.f) {
-        const float u_d = (j > 0) ? uX_d(h, qx, nx, ny, i, j - 1) : u;
-        du_dy = (u - u_d) / dx;
-    } else {
-        const float u_u = (j < ny - 1) ? uX_d(h, qx, nx, ny, i, j + 1) : u;
-        du_dy = (u_u - u) / dx;
+    if (h[c] + h[cxp] < 2.f * kDryEps) {
+        qx_out[c] = 0.f;
+        return;
     }
 
-    const int   il = i - 1;
-    const int   ir = i;
-    const float hL = h[idxH(il, j, nx)];
-    const float hR = h[idxH(ir, j, nx)];
-    const float etaL = b[idxH(il, j, nx)] + hL;
-    const float etaR = b[idxH(ir, j, nx)] + hR;
-    float pres       = 0.f;
-    if (hL >= kDryEps && hR >= kDryEps)
-        pres = kG * (etaR - etaL) / dx;
+    const int im1 = clamp_x_d(i - 1, nx);
+    const int ip1 = clamp_x_d(i + 1, nx);
+    const int ip2 = clamp_x_d(i + 2, nx);
+    const int jm1 = clamp_y_d(j - 1, ny);
+    const int jp1 = clamp_y_d(j + 1, ny);
 
-    const float advection  = (qx_avg / hf) * du_dx + (qy_mid / hf) * du_dy;
-    const float qx_current = qx[idxQX(i, j, nx)];
-    float qx_next          = qx_current - dt * (hf * advection + hf * pres);
-    const float qmax       = hf * umax;
-    qx_next                = clampf(qx_next, -qmax, qmax);
-    qx_out[idxQX(i, j, nx)] = qx_next;
+    const int cxm    = idxH(im1, j,   nx);
+    const int cxpp   = idxH(ip2, j,   nx);
+    const int cym    = idxH(i,   jm1, nx);
+    const int cyp    = idxH(i,   jp1, nx);
+    const int cxp_ym = idxH(ip1, jm1, nx);
+    const int cxp_yp = idxH(ip1, jp1, nx);
+
+    const float u_self = u_at_face_x_d(qx, h, nx, i,   j);
+    const float u_xL   = u_at_face_x_d(qx, h, nx, im1, j);
+    const float u_xR   = u_at_face_x_d(qx, h, nx, ip1, j);
+    const float u_yB   = u_at_face_x_d(qx, h, nx, i,   jm1);
+    const float u_yT   = u_at_face_x_d(qx, h, nx, i,   jp1);
+
+    const float qfx_L = (u_xL   >= 0.f) ? u_xL   * h[cxm] : u_xL   * h[c];
+    const float qfx_S = (u_self >= 0.f) ? u_self * h[c]   : u_self * h[cxp];
+    const float qfx_R = (u_xR   >= 0.f) ? u_xR   * h[cxp] : u_xR   * h[cxpp];
+
+    const float qBarX_L  = 0.5f * (qfx_L + qfx_S);
+    const float qBarX_R  = 0.5f * (qfx_S + qfx_R);
+    const float uStarX_L = (qBarX_L >= 0.f) ? u_xL   : u_self;
+    const float uStarX_R = (qBarX_R >  0.f) ? u_self : u_xR;
+
+    const float v_BL = u_at_face_y_d(qy, h, nx, ny, i,   jm1);
+    const float v_BR = u_at_face_y_d(qy, h, nx, ny, ip1, jm1);
+    const float v_TL = u_at_face_y_d(qy, h, nx, ny, i,   j);
+    const float v_TR = u_at_face_y_d(qy, h, nx, ny, ip1, j);
+
+    const float qfy_BL = (v_BL >= 0.f) ? v_BL * h[cym]    : v_BL * h[c];
+    const float qfy_BR = (v_BR >= 0.f) ? v_BR * h[cxp_ym] : v_BR * h[cxp];
+    const float qfy_TL = (v_TL >= 0.f) ? v_TL * h[c]      : v_TL * h[cyp];
+    const float qfy_TR = (v_TR >= 0.f) ? v_TR * h[cxp]    : v_TR * h[cxp_yp];
+
+    const float qBarY_B  = 0.5f * (qfy_BL + qfy_BR);
+    const float qBarY_T  = 0.5f * (qfy_TL + qfy_TR);
+    const float uStarY_B = (qBarY_B >= 0.f) ? u_yB   : u_self;
+    const float uStarY_T = (qBarY_T >  0.f) ? u_self : u_yT;
+
+    const float h_face_sum = h[c] + h[cxp];
+    const float xFluxDiff  = (qBarX_R * uStarX_R - qBarX_L * uStarX_L) / dx;
+    const float yFluxDiff  = (qBarY_T * uStarY_T - qBarY_B * uStarY_B) / dx;
+    const float xQDiff     = (qBarX_R - qBarX_L) / dx;
+    const float yQDiff     = (qBarY_T - qBarY_B) / dx;
+
+    const float uu = (2.f / h_face_sum) * ((xFluxDiff + yFluxDiff) - u_self * (xQDiff + yQDiff));
+
+    float un = u_self - dt * uu - kG * dt * ((b[cxp] + h[cxp]) - (b[c] + h[c])) / dx;
+
+    float q_out = (un >= 0.f) ? un * h[c] : un * h[cxp];
+
+    const float hf   = 0.5f * h_face_sum;
+    const float qmax = hf * faceSpeedCap_d(hf, dx, dt);
+    qx_out[c]        = clampf(q_out, -qmax, qmax);
 }
 
+// Symmetric Stelling-Duinmeijer update for qy (Sim2D.cu kernel_swe_momentum_y).
 __global__ void step_qy_k(const float* h, const float* b, const float* qx, const float* qy, float* qy_out, int nx,
                           int ny, float dx, float dt) {
     const int i = blockIdx.x * blockDim.x + threadIdx.x;
     const int j = blockIdx.y * blockDim.y + threadIdx.y;
-    if (i >= nx || j >= ny + 1)
+    if (i >= nx || j >= ny)
         return;
 
-    qy_out[idxQY(i, j, nx)] = qy[idxQY(i, j, nx)];
-    if (j <= 0 || j >= ny)
-        return;
+    const int c = idxH(i, j, nx);
+    qy_out[c]   = qy[c];
 
-    const float hf = faceH_Y_d(h, qy, nx, ny, i, j);
-    if (hf < kDryEps) {
-        qy_out[idxQY(i, j, nx)] = 0.f;
+    if (j >= ny - 1) {
+        qy_out[c] = 0.f;
         return;
     }
 
-    const float vmax = faceSpeedCap_d(hf, dx, dt);
-    const float v    = uY_d(h, qy, nx, ny, i, j);
+    const int cyp = idxH(i, j + 1, nx);
 
-    const float qx_mid = 0.5f * (qx[idxQX(i, max(0, j - 1), nx)] + qx[idxQX(i, min(ny - 1, j), nx)]);
-    float dv_dx;
-    if (qx_mid >= 0.f) {
-        const float v_l = (i > 0) ? uY_d(h, qy, nx, ny, i - 1, j) : v;
-        dv_dx = (v - v_l) / dx;
-    } else {
-        const float v_r = (i < nx - 1) ? uY_d(h, qy, nx, ny, i + 1, j) : v;
-        dv_dx = (v_r - v) / dx;
+    if (h[c] + h[cyp] < 2.f * kDryEps) {
+        qy_out[c] = 0.f;
+        return;
     }
 
-    const float qy_avg = avgQY_d(qy, nx, i, j - 1);
-    float dv_dy;
-    if (qy_avg >= 0.f) {
-        const float v_d = (j > 1) ? uY_d(h, qy, nx, ny, i, j - 1) : v;
-        dv_dy = (v - v_d) / dx;
-    } else {
-        const float v_u = (j < ny) ? uY_d(h, qy, nx, ny, i, j + 1) : v;
-        dv_dy = (v_u - v) / dx;
-    }
+    const int im1 = clamp_x_d(i - 1, nx);
+    const int ip1 = clamp_x_d(i + 1, nx);
+    const int jm1 = clamp_y_d(j - 1, ny);
+    const int jp1 = clamp_y_d(j + 1, ny);
+    const int jp2 = clamp_y_d(j + 2, ny);
 
-    const int   jd = j - 1;
-    const int   ju = j;
-    const float hD = h[idxH(i, jd, nx)];
-    const float hU = h[idxH(i, ju, nx)];
-    const float etaD = b[idxH(i, jd, nx)] + hD;
-    const float etaU = b[idxH(i, ju, nx)] + hU;
-    float pres         = 0.f;
-    if (hD >= kDryEps && hU >= kDryEps)
-        pres = kG * (etaU - etaD) / dx;
+    const int cym    = idxH(i,   jm1, nx);
+    const int cypp   = idxH(i,   jp2, nx);
+    const int cxm    = idxH(im1, j,   nx);
+    const int cxp    = idxH(ip1, j,   nx);
+    const int cyp_xm = idxH(im1, jp1, nx);
+    const int cyp_xp = idxH(ip1, jp1, nx);
 
-    const float advection  = (qx_mid / hf) * dv_dx + (qy_avg / hf) * dv_dy;
-    const float qy_current = qy[idxQY(i, j, nx)];
-    float qy_next          = qy_current - dt * (hf * advection + hf * pres);
-    const float qmax       = hf * vmax;
-    qy_next                = clampf(qy_next, -qmax, qmax);
-    qy_out[idxQY(i, j, nx)] = qy_next;
+    const float v_self = u_at_face_y_d(qy, h, nx, ny, i,   j);
+    const float v_yB   = u_at_face_y_d(qy, h, nx, ny, i,   jm1);
+    const float v_yT   = u_at_face_y_d(qy, h, nx, ny, i,   jp1);
+    const float v_xL   = u_at_face_y_d(qy, h, nx, ny, im1, j);
+    const float v_xR   = u_at_face_y_d(qy, h, nx, ny, ip1, j);
+
+    const float qfy_B = (v_yB   >= 0.f) ? v_yB   * h[cym] : v_yB   * h[c];
+    const float qfy_S = (v_self >= 0.f) ? v_self * h[c]   : v_self * h[cyp];
+    const float qfy_T = (v_yT   >= 0.f) ? v_yT   * h[cyp] : v_yT   * h[cypp];
+
+    const float qBarY_B  = 0.5f * (qfy_B + qfy_S);
+    const float qBarY_T  = 0.5f * (qfy_S + qfy_T);
+    const float vStarY_B = (qBarY_B >= 0.f) ? v_yB   : v_self;
+    const float vStarY_T = (qBarY_T >  0.f) ? v_self : v_yT;
+
+    const float u_LB = u_at_face_x_d(qx, h, nx, im1, j);
+    const float u_RB = u_at_face_x_d(qx, h, nx, i,   j);
+    const float u_LT = u_at_face_x_d(qx, h, nx, im1, jp1);
+    const float u_RT = u_at_face_x_d(qx, h, nx, i,   jp1);
+
+    const float qfx_LB = (u_LB >= 0.f) ? u_LB * h[cxm]    : u_LB * h[c];
+    const float qfx_RB = (u_RB >= 0.f) ? u_RB * h[c]      : u_RB * h[cxp];
+    const float qfx_LT = (u_LT >= 0.f) ? u_LT * h[cyp_xm] : u_LT * h[cyp];
+    const float qfx_RT = (u_RT >= 0.f) ? u_RT * h[cyp]    : u_RT * h[cyp_xp];
+
+    const float qBarX_L  = 0.5f * (qfx_LB + qfx_LT);
+    const float qBarX_R  = 0.5f * (qfx_RB + qfx_RT);
+    const float vStarX_L = (qBarX_L >= 0.f) ? v_xL   : v_self;
+    const float vStarX_R = (qBarX_R >  0.f) ? v_self : v_xR;
+
+    const float h_face_sum = h[c] + h[cyp];
+    const float yFluxDiff  = (qBarY_T * vStarY_T - qBarY_B * vStarY_B) / dx;
+    const float xFluxDiff  = (qBarX_R * vStarX_R - qBarX_L * vStarX_L) / dx;
+    const float yQDiff     = (qBarY_T - qBarY_B) / dx;
+    const float xQDiff     = (qBarX_R - qBarX_L) / dx;
+
+    const float vv = (2.f / h_face_sum) * ((yFluxDiff + xFluxDiff) - v_self * (yQDiff + xQDiff));
+
+    float vn = v_self - dt * vv - kG * dt * ((b[cyp] + h[cyp]) - (b[c] + h[c])) / dx;
+
+    float q_out = (vn >= 0.f) ? vn * h[c] : vn * h[cyp];
+
+    const float hf   = 0.5f * h_face_sum;
+    const float qmax = hf * faceSpeedCap_d(hf, dx, dt);
+    qy_out[c]        = clampf(q_out, -qmax, qmax);
 }
 
+// Continuity update: qx already encodes upwind h*u, so the cell divergence is
+// the simple difference of right-face minus left-face fluxes (and top minus
+// bottom for y). Walls contribute zero flux.
 __global__ void step_h_k(const float* h, const float* qx, const float* qy, float* h_out, int nx, int ny, float dx,
                          float dt) {
     const int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -242,53 +297,56 @@ __global__ void step_h_k(const float* h, const float* qx, const float* qy, float
     if (i >= nx || j >= ny)
         return;
 
-    const float hR = faceH_X_d(h, qx, nx, ny, i + 1, j);
-    const float uR = uX_d(h, qx, nx, ny, i + 1, j);
-    const float hL = faceH_X_d(h, qx, nx, ny, i, j);
-    const float uL = uX_d(h, qx, nx, ny, i, j);
-    const float hT = faceH_Y_d(h, qy, nx, ny, i, j + 1);
-    const float vT = uY_d(h, qy, nx, ny, i, j + 1);
-    const float hB = faceH_Y_d(h, qy, nx, ny, i, j);
-    const float vB = uY_d(h, qy, nx, ny, i, j);
+    const int   c          = idxH(i, j, nx);
+    const float qx_right   = qx[c];
+    const float qx_left    = (i > 0) ? qx[idxH(i - 1, j, nx)] : 0.f;
+    const float qy_top     = qy[c];
+    const float qy_bottom  = (j > 0) ? qy[idxH(i, j - 1, nx)] : 0.f;
 
-    const float divQ = (hR * uR - hL * uL + hT * vT - hB * vB) / dx;
-    h_out[idxH(i, j, nx)] = fmaxf(0.f, h[idxH(i, j, nx)] - dt * divQ);
+    const float divQ = (qx_right - qx_left + qy_top - qy_bottom) / dx;
+    h_out[c]         = fmaxf(0.f, h[c] - dt * divQ);
 }
 
 __global__ void clamp_face_qx_k(float* qx, const float* h, int nx, int ny, float dx, float dt) {
     const int i = blockIdx.x * blockDim.x + threadIdx.x;
     const int j = blockIdx.y * blockDim.y + threadIdx.y;
-    if (i >= nx + 1 || j >= ny)
+    if (i >= nx || j >= ny)
         return;
-    if (i <= 0 || i >= nx)
+    const int c = idxH(i, j, nx);
+    if (i >= nx - 1) {
+        qx[c] = 0.f;
         return;
-
-    const float hf = faceH_X_d(h, qx, nx, ny, i, j);
+    }
+    const int   cxp = idxH(i + 1, j, nx);
+    const float hf  = 0.5f * (h[c] + h[cxp]);
     if (hf < kDryEps) {
-        qx[idxQX(i, j, nx)] = 0.f;
+        qx[c] = 0.f;
         return;
     }
     const float cap  = faceSpeedCap_d(hf, dx, dt);
     const float qmax = hf * cap;
-    qx[idxQX(i, j, nx)] = clampf(qx[idxQX(i, j, nx)], -qmax, qmax);
+    qx[c]            = clampf(qx[c], -qmax, qmax);
 }
 
 __global__ void clamp_face_qy_k(float* qy, const float* h, int nx, int ny, float dx, float dt) {
     const int i = blockIdx.x * blockDim.x + threadIdx.x;
     const int j = blockIdx.y * blockDim.y + threadIdx.y;
-    if (i >= nx || j >= ny + 1)
+    if (i >= nx || j >= ny)
         return;
-    if (j <= 0 || j >= ny)
+    const int c = idxH(i, j, nx);
+    if (j >= ny - 1) {
+        qy[c] = 0.f;
         return;
-
-    const float hf = faceH_Y_d(h, qy, nx, ny, i, j);
+    }
+    const int   cyp = idxH(i, j + 1, nx);
+    const float hf  = 0.5f * (h[c] + h[cyp]);
     if (hf < kDryEps) {
-        qy[idxQY(i, j, nx)] = 0.f;
+        qy[c] = 0.f;
         return;
     }
     const float cap  = faceSpeedCap_d(hf, dx, dt);
     const float qmax = hf * cap;
-    qy[idxQY(i, j, nx)] = clampf(qy[idxQY(i, j, nx)], -qmax, qmax);
+    qy[c]            = clampf(qy[c], -qmax, qmax);
 }
 
 void launchBoundary(float* d_qx, float* d_qy, const float* d_h, const float* d_terrain, int nx, int ny) {
@@ -306,10 +364,9 @@ void launchBoundary(float* d_qx, float* d_qy, const float* d_h, const float* d_t
 
 void launchClampFaceQ(float* d_qx, float* d_qy, const float* d_h, int nx, int ny, float dx, float dt) {
     const dim3 tb(16, 16);
-    const dim3 gbQx((nx + 1 + tb.x - 1) / tb.x, (ny + tb.y - 1) / tb.y);
-    const dim3 gbQy((nx + tb.x - 1) / tb.x, (ny + 1 + tb.y - 1) / tb.y);
-    clamp_face_qx_k<<<gbQx, tb>>>(d_qx, d_h, nx, ny, dx, dt);
-    clamp_face_qy_k<<<gbQy, tb>>>(d_qy, d_h, nx, ny, dx, dt);
+    const dim3 gbCell((nx + tb.x - 1) / tb.x, (ny + tb.y - 1) / tb.y);
+    clamp_face_qx_k<<<gbCell, tb>>>(d_qx, d_h, nx, ny, dx, dt);
+    clamp_face_qy_k<<<gbCell, tb>>>(d_qy, d_h, nx, ny, dx, dt);
     SWE_POST_KERNEL();
 }
 
@@ -353,16 +410,14 @@ struct SweGpuBuffers {
         nx = nxIn;
         ny = nyIn;
         const size_t ncell = static_cast<size_t>(nx) * static_cast<size_t>(ny);
-        const size_t nqx   = static_cast<size_t>(nx + 1) * static_cast<size_t>(ny);
-        const size_t nqy   = static_cast<size_t>(nx) * static_cast<size_t>(ny + 1);
 
         SWE_CUDA_CHECK(cudaSetDevice(0));
         SWE_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_h), ncell * sizeof(float)));
-        SWE_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_qx), nqx * sizeof(float)));
-        SWE_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_qy), nqy * sizeof(float)));
+        SWE_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_qx), ncell * sizeof(float)));
+        SWE_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_qy), ncell * sizeof(float)));
         SWE_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_terrain), ncell * sizeof(float)));
-        SWE_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_qx_new), nqx * sizeof(float)));
-        SWE_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_qy_new), nqy * sizeof(float)));
+        SWE_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_qx_new), ncell * sizeof(float)));
+        SWE_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_qy_new), ncell * sizeof(float)));
         SWE_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_h_new), ncell * sizeof(float)));
     }
 };
@@ -371,11 +426,9 @@ static SweGpuBuffers g_swe;
 
 void uploadGridToDevice(const Grid& g) {
     const size_t ncell = static_cast<size_t>(g.NX) * static_cast<size_t>(g.NY);
-    const size_t nqx   = static_cast<size_t>(g.NX + 1) * static_cast<size_t>(g.NY);
-    const size_t nqy   = static_cast<size_t>(g.NX) * static_cast<size_t>(g.NY + 1);
     SWE_CUDA_CHECK(cudaMemcpy(g_swe.d_h, g.h.data(), ncell * sizeof(float), cudaMemcpyHostToDevice));
-    SWE_CUDA_CHECK(cudaMemcpy(g_swe.d_qx, g.qx.data(), nqx * sizeof(float), cudaMemcpyHostToDevice));
-    SWE_CUDA_CHECK(cudaMemcpy(g_swe.d_qy, g.qy.data(), nqy * sizeof(float), cudaMemcpyHostToDevice));
+    SWE_CUDA_CHECK(cudaMemcpy(g_swe.d_qx, g.qx.data(), ncell * sizeof(float), cudaMemcpyHostToDevice));
+    SWE_CUDA_CHECK(cudaMemcpy(g_swe.d_qy, g.qy.data(), ncell * sizeof(float), cudaMemcpyHostToDevice));
     if (!bp_gpu::sweTerrainDeviceMatchesHostCache(g.terrain.data(), ncell)) {
         SWE_CUDA_CHECK(
             cudaMemcpy(g_swe.d_terrain, g.terrain.data(), ncell * sizeof(float), cudaMemcpyHostToDevice));
@@ -385,11 +438,9 @@ void uploadGridToDevice(const Grid& g) {
 
 void downloadGridToHost(Grid& g) {
     const size_t ncell = static_cast<size_t>(g.NX) * static_cast<size_t>(g.NY);
-    const size_t nqx   = static_cast<size_t>(g.NX + 1) * static_cast<size_t>(g.NY);
-    const size_t nqy   = static_cast<size_t>(g.NX) * static_cast<size_t>(g.NY + 1);
     SWE_CUDA_CHECK(cudaMemcpy(g.h.data(), g_swe.d_h, ncell * sizeof(float), cudaMemcpyDeviceToHost));
-    SWE_CUDA_CHECK(cudaMemcpy(g.qx.data(), g_swe.d_qx, nqx * sizeof(float), cudaMemcpyDeviceToHost));
-    SWE_CUDA_CHECK(cudaMemcpy(g.qy.data(), g_swe.d_qy, nqy * sizeof(float), cudaMemcpyDeviceToHost));
+    SWE_CUDA_CHECK(cudaMemcpy(g.qx.data(), g_swe.d_qx, ncell * sizeof(float), cudaMemcpyDeviceToHost));
+    SWE_CUDA_CHECK(cudaMemcpy(g.qy.data(), g_swe.d_qy, ncell * sizeof(float), cudaMemcpyDeviceToHost));
 }
 
 void uploadTerrainOnly(const Grid& g) {
@@ -406,19 +457,17 @@ void runSweStepKernelsNoSync(int nx, int ny, float dx, float dt) {
     launchBoundary(g_swe.d_qx, g_swe.d_qy, g_swe.d_h, g_swe.d_terrain, nx, ny);
 
     const dim3 tb(16, 16);
-    const dim3 gbQx((nx + 1 + tb.x - 1) / tb.x, (ny + tb.y - 1) / tb.y);
-    const dim3 gbQy((nx + tb.x - 1) / tb.x, (ny + 1 + tb.y - 1) / tb.y);
-    const dim3 gbH((nx + tb.x - 1) / tb.x, (ny + tb.y - 1) / tb.y);
+    const dim3 gbCell((nx + tb.x - 1) / tb.x, (ny + tb.y - 1) / tb.y);
 
-    step_qx_k<<<gbQx, tb>>>(g_swe.d_h, g_swe.d_terrain, g_swe.d_qx, g_swe.d_qy, g_swe.d_qx_new, nx, ny, dx, dt);
-    step_qy_k<<<gbQy, tb>>>(g_swe.d_h, g_swe.d_terrain, g_swe.d_qx, g_swe.d_qy, g_swe.d_qy_new, nx, ny, dx, dt);
+    step_qx_k<<<gbCell, tb>>>(g_swe.d_h, g_swe.d_terrain, g_swe.d_qx, g_swe.d_qy, g_swe.d_qx_new, nx, ny, dx, dt);
+    step_qy_k<<<gbCell, tb>>>(g_swe.d_h, g_swe.d_terrain, g_swe.d_qx, g_swe.d_qy, g_swe.d_qy_new, nx, ny, dx, dt);
     SWE_POST_KERNEL();
 
     std::swap(g_swe.d_qx, g_swe.d_qx_new);
     std::swap(g_swe.d_qy, g_swe.d_qy_new);
     launchBoundary(g_swe.d_qx, g_swe.d_qy, g_swe.d_h, g_swe.d_terrain, nx, ny);
 
-    step_h_k<<<gbH, tb>>>(g_swe.d_h, g_swe.d_qx, g_swe.d_qy, g_swe.d_h_new, nx, ny, dx, dt);
+    step_h_k<<<gbCell, tb>>>(g_swe.d_h, g_swe.d_qx, g_swe.d_qy, g_swe.d_h_new, nx, ny, dx, dt);
     SWE_POST_KERNEL();
     std::swap(g_swe.d_h, g_swe.d_h_new);
 
@@ -444,22 +493,20 @@ void sweStepGpuInPlaceDevice(float* d_h, float* d_qx, float* d_qy, const Grid& g
     bp_swe_detail::g_swe.ensure(nx, ny);
     bp_swe_detail::uploadTerrainOnly(gTerrainRef);
     const size_t ncell = static_cast<size_t>(nx) * static_cast<size_t>(ny);
-    const size_t nqx   = static_cast<size_t>(nx + 1) * static_cast<size_t>(ny);
-    const size_t nqy   = static_cast<size_t>(nx) * static_cast<size_t>(ny + 1);
     BP_SWE_CUDA_OK(
         cudaMemcpy(bp_swe_detail::g_swe.d_h, d_h, ncell * sizeof(float), cudaMemcpyDeviceToDevice));
     BP_SWE_CUDA_OK(
-        cudaMemcpy(bp_swe_detail::g_swe.d_qx, d_qx, nqx * sizeof(float), cudaMemcpyDeviceToDevice));
+        cudaMemcpy(bp_swe_detail::g_swe.d_qx, d_qx, ncell * sizeof(float), cudaMemcpyDeviceToDevice));
     BP_SWE_CUDA_OK(
-        cudaMemcpy(bp_swe_detail::g_swe.d_qy, d_qy, nqy * sizeof(float), cudaMemcpyDeviceToDevice));
+        cudaMemcpy(bp_swe_detail::g_swe.d_qy, d_qy, ncell * sizeof(float), cudaMemcpyDeviceToDevice));
     bp_swe_detail::runSweStepKernelsNoSync(nx, ny, dx, dt);
     BP_SWE_CUDA_OK(cudaDeviceSynchronize());
     BP_SWE_CUDA_OK(
         cudaMemcpy(d_h, bp_swe_detail::g_swe.d_h, ncell * sizeof(float), cudaMemcpyDeviceToDevice));
     BP_SWE_CUDA_OK(
-        cudaMemcpy(d_qx, bp_swe_detail::g_swe.d_qx, nqx * sizeof(float), cudaMemcpyDeviceToDevice));
+        cudaMemcpy(d_qx, bp_swe_detail::g_swe.d_qx, ncell * sizeof(float), cudaMemcpyDeviceToDevice));
     BP_SWE_CUDA_OK(
-        cudaMemcpy(d_qy, bp_swe_detail::g_swe.d_qy, nqy * sizeof(float), cudaMemcpyDeviceToDevice));
+        cudaMemcpy(d_qy, bp_swe_detail::g_swe.d_qy, ncell * sizeof(float), cudaMemcpyDeviceToDevice));
 }
 
 void sweApplyBoundaryGpuInPlaceDevice(float* d_h, float* d_qx, float* d_qy, const Grid& gTerrainRef, int nx, int ny,
@@ -468,32 +515,28 @@ void sweApplyBoundaryGpuInPlaceDevice(float* d_h, float* d_qx, float* d_qy, cons
     bp_swe_detail::g_swe.ensure(nx, ny);
     bp_swe_detail::uploadTerrainOnly(gTerrainRef);
     const size_t ncell = static_cast<size_t>(nx) * static_cast<size_t>(ny);
-    const size_t nqx   = static_cast<size_t>(nx + 1) * static_cast<size_t>(ny);
-    const size_t nqy   = static_cast<size_t>(nx) * static_cast<size_t>(ny + 1);
     BP_SWE_CUDA_OK(
         cudaMemcpy(bp_swe_detail::g_swe.d_h, d_h, ncell * sizeof(float), cudaMemcpyDeviceToDevice));
     BP_SWE_CUDA_OK(
-        cudaMemcpy(bp_swe_detail::g_swe.d_qx, d_qx, nqx * sizeof(float), cudaMemcpyDeviceToDevice));
+        cudaMemcpy(bp_swe_detail::g_swe.d_qx, d_qx, ncell * sizeof(float), cudaMemcpyDeviceToDevice));
     BP_SWE_CUDA_OK(
-        cudaMemcpy(bp_swe_detail::g_swe.d_qy, d_qy, nqy * sizeof(float), cudaMemcpyDeviceToDevice));
+        cudaMemcpy(bp_swe_detail::g_swe.d_qy, d_qy, ncell * sizeof(float), cudaMemcpyDeviceToDevice));
     bp_swe_detail::runBoundaryAndClampNoSync(nx, ny, dx, dt);
     BP_SWE_CUDA_OK(cudaDeviceSynchronize());
     BP_SWE_CUDA_OK(
         cudaMemcpy(d_h, bp_swe_detail::g_swe.d_h, ncell * sizeof(float), cudaMemcpyDeviceToDevice));
     BP_SWE_CUDA_OK(
-        cudaMemcpy(d_qx, bp_swe_detail::g_swe.d_qx, nqx * sizeof(float), cudaMemcpyDeviceToDevice));
+        cudaMemcpy(d_qx, bp_swe_detail::g_swe.d_qx, ncell * sizeof(float), cudaMemcpyDeviceToDevice));
     BP_SWE_CUDA_OK(
-        cudaMemcpy(d_qy, bp_swe_detail::g_swe.d_qy, nqy * sizeof(float), cudaMemcpyDeviceToDevice));
+        cudaMemcpy(d_qy, bp_swe_detail::g_swe.d_qy, ncell * sizeof(float), cudaMemcpyDeviceToDevice));
 }
 
 void sweDownloadGridFromDevice(Grid& g, const float* d_h, const float* d_qx, const float* d_qy) {
     BP_SWE_CUDA_OK(cudaSetDevice(0));
     const size_t ncell = static_cast<size_t>(g.NX) * static_cast<size_t>(g.NY);
-    const size_t nqx   = static_cast<size_t>(g.NX + 1) * static_cast<size_t>(g.NY);
-    const size_t nqy   = static_cast<size_t>(g.NX) * static_cast<size_t>(g.NY + 1);
     BP_SWE_CUDA_OK(cudaMemcpy(g.h.data(), d_h, ncell * sizeof(float), cudaMemcpyDeviceToHost));
-    BP_SWE_CUDA_OK(cudaMemcpy(g.qx.data(), d_qx, nqx * sizeof(float), cudaMemcpyDeviceToHost));
-    BP_SWE_CUDA_OK(cudaMemcpy(g.qy.data(), d_qy, nqy * sizeof(float), cudaMemcpyDeviceToHost));
+    BP_SWE_CUDA_OK(cudaMemcpy(g.qx.data(), d_qx, ncell * sizeof(float), cudaMemcpyDeviceToHost));
+    BP_SWE_CUDA_OK(cudaMemcpy(g.qy.data(), d_qy, ncell * sizeof(float), cudaMemcpyDeviceToHost));
 }
 
 void sweApplyBoundaryConditionsGpu(Grid& g) {

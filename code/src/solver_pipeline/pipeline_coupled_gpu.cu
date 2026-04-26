@@ -38,64 +38,6 @@ __global__ void add_vec_k(float* __restrict__ out, const float* __restrict__ a, 
     out[i] = a[i] + b[i];
 }
 
-// Scatter ncell "right-face-of-cell" buffer into a staggered (nx+1)*ny qx face array.
-// Boundary face fi==0 replicates cell 0; otherwise face fi corresponds to cell fi-1 in our convention.
-__global__ void cell_to_face_qx_k(float* __restrict__ qx_face, const float* __restrict__ qx_cell, int nx, int ny) {
-    const int nface = (nx + 1) * ny;
-    const int tid   = blockIdx.x * blockDim.x + threadIdx.x;
-    if (tid >= nface)
-        return;
-    const int fi          = tid % (nx + 1);
-    const int fj          = tid / (nx + 1);
-    const int cell_i      = (fi == 0) ? 0 : (fi - 1);
-    qx_face[tid]          = qx_cell[cell_i + fj * nx];
-}
-
-__global__ void cell_to_face_qy_k(float* __restrict__ qy_face, const float* __restrict__ qy_cell, int nx, int ny) {
-    const int nface = nx * (ny + 1);
-    const int tid   = blockIdx.x * blockDim.x + threadIdx.x;
-    if (tid >= nface)
-        return;
-    const int fi          = tid % nx;
-    const int fj          = tid / nx;
-    const int cell_j      = (fj == 0) ? 0 : (fj - 1);
-    qy_face[tid]          = qy_cell[fi + cell_j * nx];
-}
-
-// out[face] = bar_face[face] + cell[cell_index_for_face]. Replicates leftmost / rightmost
-// cell at face boundaries (fi == 0 -> cell 0, fi == nx -> cell nx-1).
-__global__ void add_face_from_cell_qx_k(float* __restrict__ out, const float* __restrict__ bar_face,
-                                        const float* __restrict__ cell, int nx, int ny) {
-    const int nface = (nx + 1) * ny;
-    const int tid   = blockIdx.x * blockDim.x + threadIdx.x;
-    if (tid >= nface)
-        return;
-    const int fi     = tid % (nx + 1);
-    const int fj     = tid / (nx + 1);
-    int       cell_i = fi - 1;
-    if (fi == 0)
-        cell_i = 0;
-    else if (fi == nx)
-        cell_i = nx - 1;
-    out[tid] = bar_face[tid] + cell[cell_i + fj * nx];
-}
-
-__global__ void add_face_from_cell_qy_k(float* __restrict__ out, const float* __restrict__ bar_face,
-                                        const float* __restrict__ cell, int nx, int ny) {
-    const int nface = nx * (ny + 1);
-    const int tid   = blockIdx.x * blockDim.x + threadIdx.x;
-    if (tid >= nface)
-        return;
-    const int fi     = tid % nx;
-    const int fj     = tid / nx;
-    int       cell_j = fj - 1;
-    if (fj == 0)
-        cell_j = 0;
-    else if (fj == ny)
-        cell_j = ny - 1;
-    out[tid] = bar_face[tid] + cell[fi + cell_j * nx];
-}
-
 inline int blocks1d(int n, int t) { return (n + t - 1) / t; }
 
 struct CoupledScratch {
@@ -139,19 +81,17 @@ struct CoupledScratch {
         nx = nx_;
         ny = ny_;
         const size_t ncell = static_cast<size_t>(nx) * static_cast<size_t>(ny);
-        const size_t nqx   = static_cast<size_t>(nx + 1) * static_cast<size_t>(ny);
-        const size_t nqy   = static_cast<size_t>(nx) * static_cast<size_t>(ny + 1);
-        CP_CUDA_OK(cudaMalloc(reinterpret_cast<void**>(&d_bar0_h), ncell * sizeof(float)));
-        CP_CUDA_OK(cudaMalloc(reinterpret_cast<void**>(&d_bar0_qx), nqx * sizeof(float)));
-        CP_CUDA_OK(cudaMalloc(reinterpret_cast<void**>(&d_bar0_qy), nqy * sizeof(float)));
-        CP_CUDA_OK(cudaMalloc(reinterpret_cast<void**>(&d_bar1_h), ncell * sizeof(float)));
-        CP_CUDA_OK(cudaMalloc(reinterpret_cast<void**>(&d_bar1_qx), nqx * sizeof(float)));
-        CP_CUDA_OK(cudaMalloc(reinterpret_cast<void**>(&d_bar1_qy), nqy * sizeof(float)));
-        CP_CUDA_OK(cudaMalloc(reinterpret_cast<void**>(&d_g_h), ncell * sizeof(float)));
-        CP_CUDA_OK(cudaMalloc(reinterpret_cast<void**>(&d_g_qx), nqx * sizeof(float)));
-        CP_CUDA_OK(cudaMalloc(reinterpret_cast<void**>(&d_g_qy), nqy * sizeof(float)));
-        CP_CUDA_OK(cudaMalloc(reinterpret_cast<void**>(&d_h_sym), ncell * sizeof(float)));
-        CP_CUDA_OK(cudaMalloc(reinterpret_cast<void**>(&d_h_prev), ncell * sizeof(float)));
+        CP_CUDA_OK(cudaMalloc(reinterpret_cast<void**>(&d_bar0_h),   ncell * sizeof(float)));
+        CP_CUDA_OK(cudaMalloc(reinterpret_cast<void**>(&d_bar0_qx),  ncell * sizeof(float)));
+        CP_CUDA_OK(cudaMalloc(reinterpret_cast<void**>(&d_bar0_qy),  ncell * sizeof(float)));
+        CP_CUDA_OK(cudaMalloc(reinterpret_cast<void**>(&d_bar1_h),   ncell * sizeof(float)));
+        CP_CUDA_OK(cudaMalloc(reinterpret_cast<void**>(&d_bar1_qx),  ncell * sizeof(float)));
+        CP_CUDA_OK(cudaMalloc(reinterpret_cast<void**>(&d_bar1_qy),  ncell * sizeof(float)));
+        CP_CUDA_OK(cudaMalloc(reinterpret_cast<void**>(&d_g_h),      ncell * sizeof(float)));
+        CP_CUDA_OK(cudaMalloc(reinterpret_cast<void**>(&d_g_qx),     ncell * sizeof(float)));
+        CP_CUDA_OK(cudaMalloc(reinterpret_cast<void**>(&d_g_qy),     ncell * sizeof(float)));
+        CP_CUDA_OK(cudaMalloc(reinterpret_cast<void**>(&d_h_sym),    ncell * sizeof(float)));
+        CP_CUDA_OK(cudaMalloc(reinterpret_cast<void**>(&d_h_prev),   ncell * sizeof(float)));
     }
 };
 
@@ -172,8 +112,6 @@ void coupledSubstepGpu(Grid& g, float halfW, float halfD, WaveDecomposition& dec
     const float dx    = g.dx;
     const float dt    = g.dt;
     const int   ncell = nx * ny;
-    const int   nqx   = (nx + 1) * ny;
-    const int   nqy   = nx * (ny + 1);
 
     g_cp.ensure(nx, ny);
 
@@ -205,13 +143,12 @@ void coupledSubstepGpu(Grid& g, float halfW, float halfD, WaveDecomposition& dec
 
     constexpr int t256 = 256;
 
-    CP_CUDA_OK(cudaMemcpy(g_cp.d_bar0_h, wd.d_h_bar, szCell, cudaMemcpyDeviceToDevice));
-    cell_to_face_qx_k<<<blocks1d(nqx, t256), t256>>>(g_cp.d_bar0_qx, wd.d_qx_bar, nx, ny);
-    cell_to_face_qy_k<<<blocks1d(nqy, t256), t256>>>(g_cp.d_bar0_qy, wd.d_qy_bar, nx, ny);
-    CP_CUDA_OK(cudaMemcpy(g_cp.d_bar1_h, wd.d_h_bar, szCell, cudaMemcpyDeviceToDevice));
-    cell_to_face_qx_k<<<blocks1d(nqx, t256), t256>>>(g_cp.d_bar1_qx, wd.d_qx_bar, nx, ny);
-    cell_to_face_qy_k<<<blocks1d(nqy, t256), t256>>>(g_cp.d_bar1_qy, wd.d_qy_bar, nx, ny);
-    CP_CUDA_OK(cudaGetLastError());
+    CP_CUDA_OK(cudaMemcpy(g_cp.d_bar0_h,  wd.d_h_bar,  szCell, cudaMemcpyDeviceToDevice));
+    CP_CUDA_OK(cudaMemcpy(g_cp.d_bar0_qx, wd.d_qx_bar, szCell, cudaMemcpyDeviceToDevice));
+    CP_CUDA_OK(cudaMemcpy(g_cp.d_bar0_qy, wd.d_qy_bar, szCell, cudaMemcpyDeviceToDevice));
+    CP_CUDA_OK(cudaMemcpy(g_cp.d_bar1_h,  wd.d_h_bar,  szCell, cudaMemcpyDeviceToDevice));
+    CP_CUDA_OK(cudaMemcpy(g_cp.d_bar1_qx, wd.d_qx_bar, szCell, cudaMemcpyDeviceToDevice));
+    CP_CUDA_OK(cudaMemcpy(g_cp.d_bar1_qy, wd.d_qy_bar, szCell, cudaMemcpyDeviceToDevice));
 
     sweStepGpuInPlaceDevice(g_cp.d_bar1_h, g_cp.d_bar1_qx, g_cp.d_bar1_qy, g, nx, ny, dx, dt);
 
@@ -230,9 +167,9 @@ void coupledSubstepGpu(Grid& g, float halfW, float halfD, WaveDecomposition& dec
     CP_CUDA_OK(cudaMemcpy(g_cp.d_h_prev, wd.d_h_tilde, szCell, cudaMemcpyDeviceToDevice));
     haveHtildePrevHalf = true;
 
-    add_vec_k<<<blocks1d(ncell, t256), t256>>>(g_cp.d_g_h, g_cp.d_bar1_h, wd.d_h_tilde, ncell);
-    add_face_from_cell_qx_k<<<blocks1d(nqx, t256), t256>>>(g_cp.d_g_qx, g_cp.d_bar1_qx, wd.d_qx_tilde, nx, ny);
-    add_face_from_cell_qy_k<<<blocks1d(nqy, t256), t256>>>(g_cp.d_g_qy, g_cp.d_bar1_qy, wd.d_qy_tilde, nx, ny);
+    add_vec_k<<<blocks1d(ncell, t256), t256>>>(g_cp.d_g_h,  g_cp.d_bar1_h,  wd.d_h_tilde,  ncell);
+    add_vec_k<<<blocks1d(ncell, t256), t256>>>(g_cp.d_g_qx, g_cp.d_bar1_qx, wd.d_qx_tilde, ncell);
+    add_vec_k<<<blocks1d(ncell, t256), t256>>>(g_cp.d_g_qy, g_cp.d_bar1_qy, wd.d_qy_tilde, ncell);
     CP_CUDA_OK(cudaGetLastError());
     CP_CUDA_OK(cudaDeviceSynchronize());
 

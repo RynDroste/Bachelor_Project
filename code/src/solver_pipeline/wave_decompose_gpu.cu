@@ -177,34 +177,6 @@ __global__ void wd_diffuse_iter_k(const float* __restrict__ u,
     u_new[idx]      = uC + dt_global * (lap / (dx * dx));
 }
 
-// Convert staggered face-array qx[i + j*(nx+1)] (size (nx+1)*ny) to a cell-centered
-// "right-face-of-cell" buffer: qxc[i,j] = qx[(i+1) + j*(nx+1)].
-__global__ void wd_face_to_qxc_k(const float* __restrict__ qx_face,
-                                 float* __restrict__ qxc,
-                                 int nx,
-                                 int ny) {
-    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    const int n   = nx * ny;
-    if (idx >= n)
-        return;
-    const int i = idx % nx;
-    const int j = idx / nx;
-    qxc[idx]    = qx_face[(i + 1) + j * (nx + 1)];
-}
-
-__global__ void wd_face_to_qyc_k(const float* __restrict__ qy_face,
-                                 float* __restrict__ qyc,
-                                 int nx,
-                                 int ny) {
-    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    const int n   = nx * ny;
-    if (idx >= n)
-        return;
-    const int i = idx % nx;
-    const int j = idx / nx;
-    qyc[idx]    = qy_face[i + (j + 1) * nx];
-}
-
 __global__ void wd_add_k(const float* __restrict__ a, const float* __restrict__ b, float* __restrict__ out, int n) {
     const int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= n)
@@ -332,8 +304,6 @@ struct WdGpuScratch {
 
     float* d_qxc_in     = nullptr; // input cell-centered qx (right-face-of-cell)
     float* d_qyc_in     = nullptr; // input cell-centered qy (top-face-of-cell)
-    float* d_qx_face_in = nullptr; // staggered upload buffer for qx
-    float* d_qy_face_in = nullptr; // staggered upload buffer for qy
 
     float* d_h_bar      = nullptr;
     float* d_h_tilde    = nullptr;
@@ -353,8 +323,6 @@ struct WdGpuScratch {
         cudaFree(d_pong);
         cudaFree(d_qxc_in);
         cudaFree(d_qyc_in);
-        cudaFree(d_qx_face_in);
-        cudaFree(d_qy_face_in);
         cudaFree(d_h_bar);
         cudaFree(d_h_tilde);
         cudaFree(d_qx_bar);
@@ -363,7 +331,7 @@ struct WdGpuScratch {
         cudaFree(d_qy_tilde);
         d_h = d_b = d_alpha_xR = d_alpha_yT = d_alpha_cell = d_alpha_max = nullptr;
         d_ping = d_pong = nullptr;
-        d_qxc_in = d_qyc_in = d_qx_face_in = d_qy_face_in = nullptr;
+        d_qxc_in = d_qyc_in = nullptr;
         d_h_bar = d_h_tilde = d_qx_bar = d_qx_tilde = d_qy_bar = d_qy_tilde = nullptr;
         nx = ny = 0;
         bp_gpu::terrainCacheInvalidate();
@@ -376,8 +344,6 @@ struct WdGpuScratch {
         nx = nx_;
         ny = ny_;
         const size_t ncell = static_cast<size_t>(nx) * static_cast<size_t>(ny);
-        const size_t nqx   = static_cast<size_t>(nx + 1) * static_cast<size_t>(ny);
-        const size_t nqy   = static_cast<size_t>(nx) * static_cast<size_t>(ny + 1);
         const size_t bF    = ncell * sizeof(float);
         WD_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_h), bF));
         WD_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_b), bF));
@@ -389,8 +355,6 @@ struct WdGpuScratch {
         WD_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_pong), bF));
         WD_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_qxc_in), bF));
         WD_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_qyc_in), bF));
-        WD_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_qx_face_in), nqx * sizeof(float)));
-        WD_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_qy_face_in), nqy * sizeof(float)));
         WD_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_h_bar), bF));
         WD_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_h_tilde), bF));
         WD_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_qx_bar), bF));
@@ -422,28 +386,21 @@ void wdRunDecomposeCore(const Grid& g, float d_grad_penalty, int n_diffusion_ite
 
     g_wd.ensure(nx, ny);
     const int ncell = nx * ny;
-    const int nqx   = (nx + 1) * ny;
-    const int nqy   = nx * (ny + 1);
 
     constexpr int threads = 256;
     const int     blks    = blocks_for(ncell, threads);
 
-    WD_CUDA_CHECK(cudaMemcpy(g_wd.d_h, g.h.data(), static_cast<size_t>(ncell) * sizeof(float), cudaMemcpyHostToDevice));
+    const size_t bF = static_cast<size_t>(ncell) * sizeof(float);
+    WD_CUDA_CHECK(cudaMemcpy(g_wd.d_h, g.h.data(), bF, cudaMemcpyHostToDevice));
     if (!bp_gpu::terrainHostMatchesCachedSnapshot(g.terrain.data(), static_cast<std::size_t>(ncell))) {
-        WD_CUDA_CHECK(cudaMemcpy(g_wd.d_b, g.terrain.data(), static_cast<size_t>(ncell) * sizeof(float),
-                                 cudaMemcpyHostToDevice));
+        WD_CUDA_CHECK(cudaMemcpy(g_wd.d_b, g.terrain.data(), bF, cudaMemcpyHostToDevice));
         bp_gpu::noteWaveDecomposeTerrainH2d(g.terrain.data(), static_cast<std::size_t>(ncell));
     }
 
-    // Upload staggered qx/qy and convert to cell-centered (right/top-face-of-cell) buffers.
-    WD_CUDA_CHECK(cudaMemcpy(g_wd.d_qx_face_in, g.qx.data(), static_cast<size_t>(nqx) * sizeof(float),
-                             cudaMemcpyHostToDevice));
-    WD_CUDA_CHECK(cudaMemcpy(g_wd.d_qy_face_in, g.qy.data(), static_cast<size_t>(nqy) * sizeof(float),
-                             cudaMemcpyHostToDevice));
-    wd_face_to_qxc_k<<<blks, threads, 0, 0>>>(g_wd.d_qx_face_in, g_wd.d_qxc_in, nx, ny);
-    WD_POST_KERNEL();
-    wd_face_to_qyc_k<<<blks, threads, 0, 0>>>(g_wd.d_qy_face_in, g_wd.d_qyc_in, nx, ny);
-    WD_POST_KERNEL();
+    // qx / qy are now cell-centered N*N (right-face / top-face owned by cell (i,j)),
+    // matching the SD discretisation and the wave decomposition's internal layout.
+    WD_CUDA_CHECK(cudaMemcpy(g_wd.d_qxc_in, g.qx.data(), bF, cudaMemcpyHostToDevice));
+    WD_CUDA_CHECK(cudaMemcpy(g_wd.d_qyc_in, g.qy.data(), bF, cudaMemcpyHostToDevice));
 
     // Face-local alpha, then cell-min alpha, then global dt.
     wd_alpha_face_k<<<blks, threads, 0, 0>>>(g_wd.d_h, g_wd.d_b, g_wd.d_alpha_xR, g_wd.d_alpha_yT, nx, ny,

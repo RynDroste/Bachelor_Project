@@ -2,6 +2,13 @@
 
 #include <vector>
 
+// All fields live on a cell-centered NX*NY grid. qx and qy follow the
+// "right-face / top-face owned by cell (i, j)" convention (matches Sim2D.cu):
+//   QX(i, j) is the momentum at the right face of cell (i, j), shared with
+//   cell (i+1, j); QY(i, j) is the momentum at the top face shared with
+//   cell (i, j+1). The right face of cell (NX-1, j) is the right wall and is
+//   pinned to 0 by the boundary kernels; the left wall is structurally absent
+//   (the left face of cell (0, j) is implicit and treated as a closed wall).
 struct Grid {
     int   NX, NY;
     float dx;

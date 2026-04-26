@@ -49,15 +49,3 @@ void airy_cuda_launch_blend(const float* d_sx0,
                             int nx,
                             int ny,
                             cudaStream_t stream = 0);
-
-void airy_cuda_launch_face_to_cell(const float* d_qx_face,
-                                   const float* d_qy_face,
-                                   float* d_qxc,
-                                   float* d_qyc,
-                                   int nx,
-                                   int ny,
-                                   cudaStream_t stream = 0);
-
-void airy_cuda_launch_cell_to_qx_faces(const float* d_qxc, float* d_qx_face, int nx, int ny, cudaStream_t stream = 0);
-
-void airy_cuda_launch_cell_to_qy_faces(const float* d_qyc, float* d_qy_face, int nx, int ny, cudaStream_t stream = 0);

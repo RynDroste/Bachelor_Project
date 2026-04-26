@@ -30,30 +30,44 @@ namespace bp_jt_detail {
 
 constexpr float kDryEps = 1e-4f;
 
+// All q-fields are now N*N cell-centered with the "right-face / top-face owned
+// by cell (i, j)" convention. Callers still address faces by face-index in
+// [0, nx] (resp. [0, ny]); we map face i -> qx-cell index (i - 1) and treat
+// face 0 / face nx as the closed left / right wall (u = 0, h replicated).
 __device__ inline float d_faceH_X(const float* h, const float* qx, int nx, int ny, int i, int j) {
-    const int il = max(0, i - 1);
-    const int ir = min(nx - 1, i);
-    const float qxf = qx[i + j * (nx + 1)];
-    return (qxf >= 0.f) ? h[il + j * nx] : h[ir + j * nx];
+    if (i <= 0)
+        return h[0 + j * nx];
+    if (i >= nx)
+        return h[(nx - 1) + j * nx];
+    const int   c = (i - 1) + j * nx;
+    const float q = qx[c];
+    return (q >= 0.f) ? h[(i - 1) + j * nx] : h[i + j * nx];
 }
 
 __device__ inline float d_faceH_Y(const float* h, const float* qy, int nx, int ny, int i, int j) {
-    const int jd = max(0, j - 1);
-    const int ju = min(ny - 1, j);
-    const float qyf = qy[i + j * nx];
-    return (qyf >= 0.f) ? h[i + jd * nx] : h[i + ju * nx];
+    if (j <= 0)
+        return h[i + 0 * nx];
+    if (j >= ny)
+        return h[i + (ny - 1) * nx];
+    const int   c = i + (j - 1) * nx;
+    const float q = qy[c];
+    return (q >= 0.f) ? h[i + (j - 1) * nx] : h[i + j * nx];
 }
 
 __device__ inline float d_uFaceX(const float* h, const float* qx, int nx, int ny, int i, int j) {
+    if (i <= 0 || i >= nx)
+        return 0.f;
     const float hf = d_faceH_X(h, qx, nx, ny, i, j);
-    const float qxf = qx[i + j * (nx + 1)];
-    return (hf < kDryEps) ? 0.f : qxf / hf;
+    const float q  = qx[(i - 1) + j * nx];
+    return (hf < kDryEps) ? 0.f : q / hf;
 }
 
 __device__ inline float d_uFaceY(const float* h, const float* qy, int nx, int ny, int i, int j) {
+    if (j <= 0 || j >= ny)
+        return 0.f;
     const float hf = d_faceH_Y(h, qy, nx, ny, i, j);
-    const float qyf = qy[i + j * nx];
-    return (hf < kDryEps) ? 0.f : qyf / hf;
+    const float q  = qy[i + (j - 1) * nx];
+    return (hf < kDryEps) ? 0.f : q / hf;
 }
 
 __device__ inline float d_uXmid(const float* h0, const float* qx0, const float* h1, const float* qx1,
@@ -125,46 +139,6 @@ __device__ inline float d_uxAtQyFace(const float* ha, const float* qxa, const fl
                     d_uxM_at(ha, qxa, hb, qxb, nx, ny, i0, jp) + d_uxM_at(ha, qxa, hb, qxb, nx, ny, i1, jp));
 }
 
-__device__ inline float d_sampleQx(const float* q, int nx, int ny, float fi, float fj) {
-    fi = fminf(fmaxf(fi, 0.f), static_cast<float>(nx));
-    fj = fminf(fmaxf(fj, 0.f), static_cast<float>(ny - 1) - 1e-5f);
-    int i0 = static_cast<int>(floorf(fi));
-    int j0 = static_cast<int>(floorf(fj));
-    const float tx = fi - static_cast<float>(i0);
-    const float ty = fj - static_cast<float>(j0);
-    i0 = max(0, min(nx - 1, i0));
-    j0 = max(0, min(ny - 1, j0));
-    const int i1 = min(i0 + 1, nx);
-    const int j1 = min(j0 + 1, ny - 1);
-    const float q00 = q[i0 + j0 * (nx + 1)];
-    const float q10 = q[i1 + j0 * (nx + 1)];
-    const float q01 = q[i0 + j1 * (nx + 1)];
-    const float q11 = q[i1 + j1 * (nx + 1)];
-    const float q0  = q00 + tx * (q10 - q00);
-    const float q1  = q01 + tx * (q11 - q01);
-    return q0 + ty * (q1 - q0);
-}
-
-__device__ inline float d_sampleQy(const float* q, int nx, int ny, float fi, float fj) {
-    fi = fminf(fmaxf(fi, 0.f), static_cast<float>(nx - 1) - 1e-5f);
-    fj = fminf(fmaxf(fj, 0.f), static_cast<float>(ny));
-    int i0 = static_cast<int>(floorf(fi));
-    int j0 = static_cast<int>(floorf(fj));
-    const float tx = fi - static_cast<float>(i0);
-    const float ty = fj - static_cast<float>(j0);
-    i0 = max(0, min(nx - 2, i0));
-    j0 = max(0, min(ny - 1, j0));
-    const int i1 = min(i0 + 1, nx - 1);
-    const int j1 = min(j0 + 1, ny);
-    const float q00 = q[i0 + j0 * nx];
-    const float q10 = q[i1 + j0 * nx];
-    const float q01 = q[i0 + j1 * nx];
-    const float q11 = q[i1 + j1 * nx];
-    const float q0  = q00 + tx * (q10 - q00);
-    const float q1  = q01 + tx * (q11 - q01);
-    return q0 + ty * (q1 - q0);
-}
-
 __device__ inline float d_sampleHcell(const float* h, int nx, int ny, float fi, float fj) {
     fi = fminf(fmaxf(fi, 0.f), static_cast<float>(nx - 1) - 1e-5f);
     fj = fminf(fmaxf(fj, 0.f), static_cast<float>(ny - 1) - 1e-5f);
@@ -209,7 +183,10 @@ __device__ inline float d_sampleQyCell(const float* q, int nx, int ny, float fi,
     return d_sampleQxCell(q, nx, ny, fi, fj);
 }
 
-// Cell (i,j) here owns the right-face-of-cell qx value (face index i+1 in the staggered grid).
+// qx_tilde[c] is the right-face-of-cell-(i,j) momentum (cell-centered N*N).
+// We damp it by the divergence averaged between cell (i,j) and (i+1,j); at
+// the right wall (i == nx-1) we just use cell (i,j)'s divergence since the
+// outside cell is not addressable.
 __global__ void transport_qx_damp_k(float* qx_tilde, const float* ha, const float* qxa, const float* qya,
                                      const float* hb, const float* qxb, const float* qyb, int nx, int ny,
                                      float dx, float gamma, float dt) {
@@ -230,7 +207,7 @@ __global__ void transport_qx_damp_k(float* qx_tilde, const float* ha, const floa
     qx_tilde[tid] *= expf(d_clampExpArg(G * dt));
 }
 
-// Cell (i,j) owns the top-face-of-cell qy value (face index j+1 in the staggered grid).
+// Symmetric to transport_qx_damp_k for the top face of cell (i,j).
 __global__ void transport_qy_damp_k(float* qy_tilde, const float* ha, const float* qxa, const float* qya,
                                        const float* hb, const float* qxb, const float* qyb, int nx, int ny,
                                        float dx, float gamma, float dt) {
@@ -378,21 +355,19 @@ struct JtGpuScratch {
         nx = nx_;
         ny = ny_;
         const size_t ncell = static_cast<size_t>(nx) * static_cast<size_t>(ny);
-        const size_t nqx   = static_cast<size_t>(nx + 1) * static_cast<size_t>(ny);
-        const size_t nqy   = static_cast<size_t>(nx) * static_cast<size_t>(ny + 1);
 
-        JT_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_h0), ncell * sizeof(float)));
-        JT_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_qx0), nqx * sizeof(float)));
-        JT_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_qy0), nqy * sizeof(float)));
-        JT_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_h1), ncell * sizeof(float)));
-        JT_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_qx1), nqx * sizeof(float)));
-        JT_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_qy1), nqy * sizeof(float)));
+        JT_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_h0),       ncell * sizeof(float)));
+        JT_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_qx0),      ncell * sizeof(float)));
+        JT_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_qy0),      ncell * sizeof(float)));
+        JT_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_h1),       ncell * sizeof(float)));
+        JT_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_qx1),      ncell * sizeof(float)));
+        JT_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_qy1),      ncell * sizeof(float)));
         JT_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_qx_tilde), ncell * sizeof(float)));
         JT_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_qy_tilde), ncell * sizeof(float)));
-        JT_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_h_tilde), ncell * sizeof(float)));
+        JT_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_h_tilde),  ncell * sizeof(float)));
         JT_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_qx_saved), ncell * sizeof(float)));
         JT_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_qy_saved), ncell * sizeof(float)));
-        JT_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_h_saved), ncell * sizeof(float)));
+        JT_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_h_saved),  ncell * sizeof(float)));
     }
 };
 
@@ -451,21 +426,19 @@ void transportSurfaceGpu(WaveDecomposition& dec, const Grid& gBar0, const Grid& 
 
     bp_jt_detail::g_jt.ensure(nx, ny);
     const size_t ncell = static_cast<size_t>(nx) * static_cast<size_t>(ny);
-    const size_t nqx   = static_cast<size_t>(nx + 1) * static_cast<size_t>(ny);
-    const size_t nqy   = static_cast<size_t>(nx) * static_cast<size_t>(ny + 1);
 
     BP_JT_CUDA_OK(
-        cudaMemcpy(bp_jt_detail::g_jt.d_h0, gBar0.h.data(), ncell * sizeof(float), cudaMemcpyHostToDevice));
+        cudaMemcpy(bp_jt_detail::g_jt.d_h0,  gBar0.h.data(),  ncell * sizeof(float), cudaMemcpyHostToDevice));
     BP_JT_CUDA_OK(
-        cudaMemcpy(bp_jt_detail::g_jt.d_qx0, gBar0.qx.data(), nqx * sizeof(float), cudaMemcpyHostToDevice));
+        cudaMemcpy(bp_jt_detail::g_jt.d_qx0, gBar0.qx.data(), ncell * sizeof(float), cudaMemcpyHostToDevice));
     BP_JT_CUDA_OK(
-        cudaMemcpy(bp_jt_detail::g_jt.d_qy0, gBar0.qy.data(), nqy * sizeof(float), cudaMemcpyHostToDevice));
+        cudaMemcpy(bp_jt_detail::g_jt.d_qy0, gBar0.qy.data(), ncell * sizeof(float), cudaMemcpyHostToDevice));
     BP_JT_CUDA_OK(
-        cudaMemcpy(bp_jt_detail::g_jt.d_h1, gBar1.h.data(), ncell * sizeof(float), cudaMemcpyHostToDevice));
+        cudaMemcpy(bp_jt_detail::g_jt.d_h1,  gBar1.h.data(),  ncell * sizeof(float), cudaMemcpyHostToDevice));
     BP_JT_CUDA_OK(
-        cudaMemcpy(bp_jt_detail::g_jt.d_qx1, gBar1.qx.data(), nqx * sizeof(float), cudaMemcpyHostToDevice));
+        cudaMemcpy(bp_jt_detail::g_jt.d_qx1, gBar1.qx.data(), ncell * sizeof(float), cudaMemcpyHostToDevice));
     BP_JT_CUDA_OK(
-        cudaMemcpy(bp_jt_detail::g_jt.d_qy1, gBar1.qy.data(), nqy * sizeof(float), cudaMemcpyHostToDevice));
+        cudaMemcpy(bp_jt_detail::g_jt.d_qy1, gBar1.qy.data(), ncell * sizeof(float), cudaMemcpyHostToDevice));
     BP_JT_CUDA_OK(
         cudaMemcpy(bp_jt_detail::g_jt.d_qx_tilde, dec.qx_tilde.data(), ncell * sizeof(float), cudaMemcpyHostToDevice));
     BP_JT_CUDA_OK(
@@ -491,15 +464,13 @@ void transportSurfaceGpuDevice(float* d_bar0_h, float* d_bar0_qx, float* d_bar0_
     BP_JT_CUDA_OK(cudaSetDevice(0));
     bp_jt_detail::g_jt.ensure(nx, ny);
     const size_t ncell = static_cast<size_t>(nx) * static_cast<size_t>(ny);
-    const size_t nqx   = static_cast<size_t>(nx + 1) * static_cast<size_t>(ny);
-    const size_t nqy   = static_cast<size_t>(nx) * static_cast<size_t>(ny + 1);
 
-    BP_JT_CUDA_OK(cudaMemcpy(bp_jt_detail::g_jt.d_h0, d_bar0_h, ncell * sizeof(float), cudaMemcpyDeviceToDevice));
-    BP_JT_CUDA_OK(cudaMemcpy(bp_jt_detail::g_jt.d_qx0, d_bar0_qx, nqx * sizeof(float), cudaMemcpyDeviceToDevice));
-    BP_JT_CUDA_OK(cudaMemcpy(bp_jt_detail::g_jt.d_qy0, d_bar0_qy, nqy * sizeof(float), cudaMemcpyDeviceToDevice));
-    BP_JT_CUDA_OK(cudaMemcpy(bp_jt_detail::g_jt.d_h1, d_bar1_h, ncell * sizeof(float), cudaMemcpyDeviceToDevice));
-    BP_JT_CUDA_OK(cudaMemcpy(bp_jt_detail::g_jt.d_qx1, d_bar1_qx, nqx * sizeof(float), cudaMemcpyDeviceToDevice));
-    BP_JT_CUDA_OK(cudaMemcpy(bp_jt_detail::g_jt.d_qy1, d_bar1_qy, nqy * sizeof(float), cudaMemcpyDeviceToDevice));
+    BP_JT_CUDA_OK(cudaMemcpy(bp_jt_detail::g_jt.d_h0,  d_bar0_h,  ncell * sizeof(float), cudaMemcpyDeviceToDevice));
+    BP_JT_CUDA_OK(cudaMemcpy(bp_jt_detail::g_jt.d_qx0, d_bar0_qx, ncell * sizeof(float), cudaMemcpyDeviceToDevice));
+    BP_JT_CUDA_OK(cudaMemcpy(bp_jt_detail::g_jt.d_qy0, d_bar0_qy, ncell * sizeof(float), cudaMemcpyDeviceToDevice));
+    BP_JT_CUDA_OK(cudaMemcpy(bp_jt_detail::g_jt.d_h1,  d_bar1_h,  ncell * sizeof(float), cudaMemcpyDeviceToDevice));
+    BP_JT_CUDA_OK(cudaMemcpy(bp_jt_detail::g_jt.d_qx1, d_bar1_qx, ncell * sizeof(float), cudaMemcpyDeviceToDevice));
+    BP_JT_CUDA_OK(cudaMemcpy(bp_jt_detail::g_jt.d_qy1, d_bar1_qy, ncell * sizeof(float), cudaMemcpyDeviceToDevice));
     BP_JT_CUDA_OK(cudaMemcpy(bp_jt_detail::g_jt.d_qx_tilde, d_qx_tilde, ncell * sizeof(float), cudaMemcpyDeviceToDevice));
     BP_JT_CUDA_OK(cudaMemcpy(bp_jt_detail::g_jt.d_qy_tilde, d_qy_tilde, ncell * sizeof(float), cudaMemcpyDeviceToDevice));
     BP_JT_CUDA_OK(cudaMemcpy(bp_jt_detail::g_jt.d_h_tilde, d_h_tilde, ncell * sizeof(float), cudaMemcpyDeviceToDevice));

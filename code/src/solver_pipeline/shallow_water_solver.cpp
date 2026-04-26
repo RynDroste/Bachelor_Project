@@ -6,17 +6,17 @@
 
 Grid::Grid(int nx, int ny, float cell_size, float timestep)
     : NX(nx), NY(ny), dx(cell_size), dt(timestep)
-    , h       (nx * ny,        0.f)
-    , qx      ((nx+1) * ny,    0.f)
-    , qy      (nx * (ny+1),    0.f)
-    , terrain (nx * ny,        0.f)
+    , h       (nx * ny, 0.f)
+    , qx      (nx * ny, 0.f)
+    , qy      (nx * ny, 0.f)
+    , terrain (nx * ny, 0.f)
 {}
 
 float& Grid::H(int i, int j)       { return h[i + j*NX]; }
 float  Grid::H(int i, int j) const { return h[i + j*NX]; }
 
-float& Grid::QX(int i, int j)       { return qx[i + j*(NX+1)]; }
-float  Grid::QX(int i, int j) const { return qx[i + j*(NX+1)]; }
+float& Grid::QX(int i, int j)       { return qx[i + j*NX]; }
+float  Grid::QX(int i, int j) const { return qx[i + j*NX]; }
 
 float& Grid::QY(int i, int j)       { return qy[i + j*NX]; }
 float  Grid::QY(int i, int j) const { return qy[i + j*NX]; }
@@ -33,64 +33,26 @@ void gridSlideDomain(Grid& g, int di, int dj, float restH) {
 
     std::vector<float> newH(static_cast<size_t>(NX) * NY, restH);
     std::vector<float> newT(static_cast<size_t>(NX) * NY, 0.0f);
-    std::vector<float> newQx(static_cast<size_t>(NX + 1) * NY, 0.0f);
-    std::vector<float> newQy(static_cast<size_t>(NX) * (NY + 1), 0.0f);
+    std::vector<float> newQx(static_cast<size_t>(NX) * NY, 0.0f);
+    std::vector<float> newQy(static_cast<size_t>(NX) * NY, 0.0f);
 
-    // Cell-centred fields (H, terrain): layout NX x NY, indexed i + j*NX.
-    {
-        const int i0dst = std::max(0, -di);
-        const int i1dst = std::min(NX, NX - di);
-        const int srcI  = i0dst + di;
-        const int len   = i1dst - i0dst;
+    // All four fields share the same cell-centered NX x NY layout, indexed i + j*NX.
+    const int i0dst = std::max(0, -di);
+    const int i1dst = std::min(NX, NX - di);
+    const int srcI  = i0dst + di;
+    const int len   = i1dst - i0dst;
+    if (len > 0) {
         for (int j = 0; j < NY; ++j) {
             const int srcJ = j + dj;
             if (srcJ < 0 || srcJ >= NY)
                 continue;
-            if (len <= 0)
-                continue;
-            std::memcpy(&newH[i0dst + static_cast<size_t>(j) * NX],
-                        &g.h[srcI + static_cast<size_t>(srcJ) * NX],
-                        static_cast<size_t>(len) * sizeof(float));
-            std::memcpy(&newT[i0dst + static_cast<size_t>(j) * NX],
-                        &g.terrain[srcI + static_cast<size_t>(srcJ) * NX],
-                        static_cast<size_t>(len) * sizeof(float));
-        }
-    }
-
-    // Qx lives on vertical edges: layout (NX+1) x NY, indexed i + j*(NX+1), i in [0, NX].
-    {
-        const int stride = NX + 1;
-        const int i0dst  = std::max(0, -di);
-        const int i1dst  = std::min(stride, stride - di);
-        const int srcI   = i0dst + di;
-        const int len    = i1dst - i0dst;
-        for (int j = 0; j < NY; ++j) {
-            const int srcJ = j + dj;
-            if (srcJ < 0 || srcJ >= NY)
-                continue;
-            if (len <= 0)
-                continue;
-            std::memcpy(&newQx[i0dst + static_cast<size_t>(j) * stride],
-                        &g.qx[srcI + static_cast<size_t>(srcJ) * stride],
-                        static_cast<size_t>(len) * sizeof(float));
-        }
-    }
-
-    // Qy lives on horizontal edges: layout NX x (NY+1), indexed i + j*NX, j in [0, NY].
-    {
-        const int i0dst = std::max(0, -di);
-        const int i1dst = std::min(NX, NX - di);
-        const int srcI  = i0dst + di;
-        const int len   = i1dst - i0dst;
-        for (int j = 0; j <= NY; ++j) {
-            const int srcJ = j + dj;
-            if (srcJ < 0 || srcJ > NY)
-                continue;
-            if (len <= 0)
-                continue;
-            std::memcpy(&newQy[i0dst + static_cast<size_t>(j) * NX],
-                        &g.qy[srcI + static_cast<size_t>(srcJ) * NX],
-                        static_cast<size_t>(len) * sizeof(float));
+            const size_t dstOff = static_cast<size_t>(i0dst) + static_cast<size_t>(j) * NX;
+            const size_t srcOff = static_cast<size_t>(srcI)  + static_cast<size_t>(srcJ) * NX;
+            const size_t bytes  = static_cast<size_t>(len) * sizeof(float);
+            std::memcpy(&newH[dstOff],  &g.h[srcOff],       bytes);
+            std::memcpy(&newT[dstOff],  &g.terrain[srcOff], bytes);
+            std::memcpy(&newQx[dstOff], &g.qx[srcOff],      bytes);
+            std::memcpy(&newQy[dstOff], &g.qy[srcOff],      bytes);
         }
     }
 
@@ -112,8 +74,15 @@ ShallowWaterDiagnostics gridShallowWaterDiagnostics(const Grid& g, float gravity
             ++wetCount;
             if (h < hMinWet)
                 hMinWet = h;
-            const float hu    = 0.5f * (g.QX(i, j) + g.QX(i + 1, j));
-            const float hv    = 0.5f * (g.QY(i, j) + g.QY(i, j + 1));
+            // QX(i, j) is the right face of cell (i, j); the left face is the
+            // right face of cell (i-1, j). At domain boundaries the missing
+            // face is the closed wall (flux = 0).
+            const float qxL = (i > 0)         ? g.QX(i - 1, j) : 0.f;
+            const float qxR = (i < g.NX - 1)  ? g.QX(i, j)     : 0.f;
+            const float qyB = (j > 0)         ? g.QY(i, j - 1) : 0.f;
+            const float qyT = (j < g.NY - 1)  ? g.QY(i, j)     : 0.f;
+            const float hu    = 0.5f * (qxL + qxR);
+            const float hv    = 0.5f * (qyB + qyT);
             const float u     = hu / h;
             const float v     = hv / h;
             const float speed = std::sqrt(u * u + v * v);

@@ -141,14 +141,21 @@ void applyBoatForcing(Boat& boat, Grid& g, glm::vec2 sweCenterXZ, float halfW, f
     const int i = ic;
     const int j = jc;
 
+    // QX(i, j) is the right face of cell (i, j); the right wall (cell NX-1)
+    // and the implicit left wall (cell 0's left face) are closed and must not
+    // receive injected momentum.
     if (dirX >= 0.f) {
-        g.QX(i + 1, j) += dq * dirX;
+        if (i < g.NX - 1)
+            g.QX(i, j) += dq * dirX;
     } else {
-        g.QX(i, j) += dq * dirX;
+        if (i > 0)
+            g.QX(i - 1, j) += dq * dirX;
     }
     if (dirZ >= 0.f) {
-        g.QY(i, j + 1) += dq * dirZ;
+        if (j < g.NY - 1)
+            g.QY(i, j) += dq * dirZ;
     } else {
-        g.QY(i, j) += dq * dirZ;
+        if (j > 0)
+            g.QY(i, j - 1) += dq * dirZ;
     }
 }

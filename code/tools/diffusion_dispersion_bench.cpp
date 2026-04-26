@@ -68,21 +68,52 @@ float relativeWaveSpeedProxy(float lambda, float wBar) {
     return w * (cSW / cAiry) + (1.f - w) * 1.f;
 }
 
-// Matches wavedecomposer.cpp computeAlphaFromH (flat h => alpha = h^2/64)
+constexpr float kSigmaMax = 8.f;
+
+// Face-local alpha at the right face of cell (i,j), mirroring wd_alpha_face_k.
+float faceAlphaXLikeDecomposer(const Grid& g, float d_grad_penalty, int i, int j) {
+    const int   ip   = std::min(g.NX - 1, i + 1);
+    const float h_c  = g.H(i, j);
+    const float h_xp = g.H(ip, j);
+    const float b_c  = g.B(i, j);
+    const float b_xp = g.B(ip, j);
+    if (h_c <= 0.f || h_xp <= 0.f)
+        return 0.f;
+    const float maxGround = std::max(b_c, b_xp);
+    const float minWater  = 0.5f * ((b_c + h_c) + (b_xp + h_xp));
+    const float sigma     = std::max(0.f, minWater - maxGround);
+    const float ratio     = sigma / kSigmaMax;
+    const float a_main    = std::tanh(ratio * ratio);
+    const float gradient  = std::fabs((b_c + h_c) - (b_xp + h_xp));
+    const float a         = a_main * std::exp(-d_grad_penalty * gradient * gradient);
+    return (i + 1 < g.NX) ? a : 0.f;
+}
+
+float faceAlphaYLikeDecomposer(const Grid& g, float d_grad_penalty, int i, int j) {
+    const int   jp   = std::min(g.NY - 1, j + 1);
+    const float h_c  = g.H(i, j);
+    const float h_yp = g.H(i, jp);
+    const float b_c  = g.B(i, j);
+    const float b_yp = g.B(i, jp);
+    if (h_c <= 0.f || h_yp <= 0.f)
+        return 0.f;
+    const float maxGround = std::max(b_c, b_yp);
+    const float minWater  = 0.5f * ((b_c + h_c) + (b_yp + h_yp));
+    const float sigma     = std::max(0.f, minWater - maxGround);
+    const float ratio     = sigma / kSigmaMax;
+    const float a_main    = std::tanh(ratio * ratio);
+    const float gradient  = std::fabs((b_c + h_c) - (b_yp + h_yp));
+    const float a         = a_main * std::exp(-d_grad_penalty * gradient * gradient);
+    return (j + 1 < g.NY) ? a : 0.f;
+}
+
+// Mirrors wd_alpha_cell_k: alpha_cell = min over the 4 face-local alphas.
 float alphaCellLikeDecomposer(const Grid& g, float d_grad_penalty, int i, int j) {
-    constexpr float kEps = 1e-8f;
-    const float     dx   = g.dx;
-    int               im   = std::max(0, i - 1);
-    int               ip   = std::min(g.NX - 1, i + 1);
-    int               jm   = std::max(0, j - 1);
-    int               jp   = std::min(g.NY - 1, j + 1);
-    float             denom_x = float(ip - im) * dx;
-    float             denom_y = float(jp - jm) * dx;
-    float             grad_h_x  = (denom_x > 0.f) ? (g.H(ip, j) - g.H(im, j)) / denom_x : 0.f;
-    float             grad_h_y  = (denom_y > 0.f) ? (g.H(i, jp) - g.H(i, jm)) / denom_y : 0.f;
-    float             grad_h_sq = grad_h_x * grad_h_x + grad_h_y * grad_h_y;
-    float             h         = g.H(i, j);
-    return (h * h / 64.f) * std::exp(-d_grad_penalty * grad_h_sq);
+    const float aR = faceAlphaXLikeDecomposer(g, d_grad_penalty, i, j);
+    const float aT = faceAlphaYLikeDecomposer(g, d_grad_penalty, i, j);
+    const float aL = (i > 0) ? faceAlphaXLikeDecomposer(g, d_grad_penalty, i - 1, j) : aR;
+    const float aB = (j > 0) ? faceAlphaYLikeDecomposer(g, d_grad_penalty, i, j - 1) : aT;
+    return std::min({aR, aL, aT, aB});
 }
 
 float barModeEnergyFraction(const std::vector<float>& hBar, const std::vector<float>& hTilde, int nx, int jrow,
@@ -151,7 +182,8 @@ int main() {
     }
     const int   ic      = kNx / 2;
     const float alpha0  = alphaCellLikeDecomposer(gFlat, kDGrad, ic, jrow);
-    const float alphaTh = kH0 * kH0 / 64.f;
+    const float ratioFlat = kH0 / kSigmaMax;
+    const float alphaTh   = std::tanh(ratioFlat * ratioFlat);
 
     const float lambdaCut = kTwoPi * kH0;
     Grid        gCut(kNx, kNy, kDx, kDt);
@@ -185,7 +217,7 @@ int main() {
     const float rel0_2 = relativeWaveSpeedProxy(2.f, w0);
 
     std::fprintf(stderr,
-                 "alpha check (flat h=h0, cell center): alpha=%.6g  h^2/64=%.6g  rel err %.2e\n",
+                 "alpha check (flat h=h0, cell center): alpha=%.6g  tanh((h0/sigma_max)^2)=%.6g  rel err %.2e\n",
                  static_cast<double>(alpha0), static_cast<double>(alphaTh),
                  static_cast<double>(std::fabs(alpha0 - alphaTh) / alphaTh));
     std::fprintf(stderr,

@@ -183,46 +183,70 @@ __device__ inline float d_sampleHcell(const float* h, int nx, int ny, float fi, 
     return q0 + ty * (q1 - q0);
 }
 
+// Bilinear sample of a cell-centered (ncell) field. Replicate clamping at borders
+// matches the wave decomposition convention where every quantity now lives on N x N.
+__device__ inline float d_sampleQxCell(const float* q, int nx, int ny, float fi, float fj) {
+    fi = fminf(fmaxf(fi, 0.f), static_cast<float>(nx - 1) - 1e-5f);
+    fj = fminf(fmaxf(fj, 0.f), static_cast<float>(ny - 1) - 1e-5f);
+    int i0 = static_cast<int>(floorf(fi));
+    int j0 = static_cast<int>(floorf(fj));
+    const float tx = fi - static_cast<float>(i0);
+    const float ty = fj - static_cast<float>(j0);
+    i0 = max(0, min(nx - 2, i0));
+    j0 = max(0, min(ny - 2, j0));
+    const int   i1  = i0 + 1;
+    const int   j1  = j0 + 1;
+    const float q00 = q[i0 + j0 * nx];
+    const float q10 = q[i1 + j0 * nx];
+    const float q01 = q[i0 + j1 * nx];
+    const float q11 = q[i1 + j1 * nx];
+    const float q0  = q00 + tx * (q10 - q00);
+    const float q1  = q01 + tx * (q11 - q01);
+    return q0 + ty * (q1 - q0);
+}
+
+__device__ inline float d_sampleQyCell(const float* q, int nx, int ny, float fi, float fj) {
+    return d_sampleQxCell(q, nx, ny, fi, fj);
+}
+
+// Cell (i,j) here owns the right-face-of-cell qx value (face index i+1 in the staggered grid).
 __global__ void transport_qx_damp_k(float* qx_tilde, const float* ha, const float* qxa, const float* qya,
                                      const float* hb, const float* qxb, const float* qyb, int nx, int ny,
                                      float dx, float gamma, float dt) {
-    const int nqx = (nx + 1) * ny;
-    const int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    if (tid >= nqx)
-        return;
-    const int i = tid % (nx + 1);
-    const int j = tid / (nx + 1);
-
-    float divC;
-    if (i <= 0)
-        divC = d_divUmidCell(ha, qxa, qya, hb, qxb, qyb, nx, ny, 0, j, dx);
-    else if (i >= nx)
-        divC = d_divUmidCell(ha, qxa, qya, hb, qxb, qyb, nx, ny, nx - 1, j, dx);
-    else
-        divC = 0.5f * (d_divUmidCell(ha, qxa, qya, hb, qxb, qyb, nx, ny, i - 1, j, dx) +
-                       d_divUmidCell(ha, qxa, qya, hb, qxb, qyb, nx, ny, i, j, dx));
-    const float G = d_GofDiv(divC, gamma);
-    qx_tilde[tid] *= expf(d_clampExpArg(G * dt));
-}
-
-__global__ void transport_qy_damp_k(float* qy_tilde, const float* ha, const float* qxa, const float* qya,
-                                       const float* hb, const float* qxb, const float* qyb, int nx, int ny,
-                                       float dx, float gamma, float dt) {
-    const int nqy = nx * (ny + 1);
-    const int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    if (tid >= nqy)
+    const int ncell = nx * ny;
+    const int tid   = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= ncell)
         return;
     const int i = tid % nx;
     const int j = tid / nx;
 
     float divC;
-    if (j <= 0)
-        divC = d_divUmidCell(ha, qxa, qya, hb, qxb, qyb, nx, ny, i, 0, dx);
-    else if (j >= ny)
-        divC = d_divUmidCell(ha, qxa, qya, hb, qxb, qyb, nx, ny, i, ny - 1, dx);
+    if (i + 1 < nx)
+        divC = 0.5f * (d_divUmidCell(ha, qxa, qya, hb, qxb, qyb, nx, ny, i, j, dx) +
+                       d_divUmidCell(ha, qxa, qya, hb, qxb, qyb, nx, ny, i + 1, j, dx));
     else
-        divC = 0.5f * (d_divUmidCell(ha, qxa, qya, hb, qxb, qyb, nx, ny, i, j - 1, dx) +
-                       d_divUmidCell(ha, qxa, qya, hb, qxb, qyb, nx, ny, i, j, dx));
+        divC = d_divUmidCell(ha, qxa, qya, hb, qxb, qyb, nx, ny, i, j, dx);
+    const float G = d_GofDiv(divC, gamma);
+    qx_tilde[tid] *= expf(d_clampExpArg(G * dt));
+}
+
+// Cell (i,j) owns the top-face-of-cell qy value (face index j+1 in the staggered grid).
+__global__ void transport_qy_damp_k(float* qy_tilde, const float* ha, const float* qxa, const float* qya,
+                                       const float* hb, const float* qxb, const float* qyb, int nx, int ny,
+                                       float dx, float gamma, float dt) {
+    const int ncell = nx * ny;
+    const int tid   = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= ncell)
+        return;
+    const int i = tid % nx;
+    const int j = tid / nx;
+
+    float divC;
+    if (j + 1 < ny)
+        divC = 0.5f * (d_divUmidCell(ha, qxa, qya, hb, qxb, qyb, nx, ny, i, j, dx) +
+                       d_divUmidCell(ha, qxa, qya, hb, qxb, qyb, nx, ny, i, j + 1, dx));
+    else
+        divC = d_divUmidCell(ha, qxa, qya, hb, qxb, qyb, nx, ny, i, j, dx);
     const float G = d_GofDiv(divC, gamma);
     qy_tilde[tid] *= expf(d_clampExpArg(G * dt));
 }
@@ -230,43 +254,46 @@ __global__ void transport_qy_damp_k(float* qy_tilde, const float* ha, const floa
 __global__ void transport_qx_advect_k(float* qx_out, const float* qx_src, const float* ha, const float* qxa,
                                          const float* qya, const float* hb, const float* qxb, const float* qyb,
                                          int nx, int ny, float dx, float halfW, float halfD, float dt) {
-    const int nqx = (nx + 1) * ny;
-    const int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    if (tid >= nqx)
+    const int ncell = nx * ny;
+    const int tid   = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= ncell)
         return;
-    const int i = tid % (nx + 1);
-    const int j = tid / (nx + 1);
+    const int i = tid % nx;
+    const int j = tid / nx;
 
-    const float x  = static_cast<float>(i) * dx - halfW;
+    // Cell (i,j) right-face position in world coords.
+    const float x  = (static_cast<float>(i) + 1.f) * dx - halfW;
     const float z  = (static_cast<float>(j) + 0.5f) * dx - halfD;
-    const float ux = d_uXmid(ha, qxa, hb, qxb, nx, ny, i, j);
-    const float uz = d_uzAtQxFace(ha, qxa, qya, hb, qxb, qyb, nx, ny, i, j);
+    const float ux = d_uXmid(ha, qxa, hb, qxb, nx, ny, i + 1, j);
+    const float uz = d_uzAtQxFace(ha, qxa, qya, hb, qxb, qyb, nx, ny, i + 1, j);
     const float xd = x - ux * dt;
     const float zd = z - uz * dt;
-    const float fi = (xd + halfW) / dx;
+    // Map back to cell index (cell c at world x = (c+1)*dx - halfW for our right-face convention).
+    const float fi = (xd + halfW) / dx - 1.f;
     const float fj = (zd + halfD) / dx - 0.5f;
-    qx_out[tid]    = d_sampleQx(qx_src, nx, ny, fi, fj);
+    qx_out[tid]    = d_sampleQxCell(qx_src, nx, ny, fi, fj);
 }
 
 __global__ void transport_qy_advect_k(float* qy_out, const float* qy_src, const float* ha, const float* qxa,
                                        const float* qya, const float* hb, const float* qxb, const float* qyb, int nx,
                                        int ny, float dx, float halfW, float halfD, float dt) {
-    const int nqy = nx * (ny + 1);
-    const int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    if (tid >= nqy)
+    const int ncell = nx * ny;
+    const int tid   = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= ncell)
         return;
     const int i = tid % nx;
     const int j = tid / nx;
 
+    // Cell (i,j) top-face position in world coords.
     const float x  = (static_cast<float>(i) + 0.5f) * dx - halfW;
-    const float z  = static_cast<float>(j) * dx - halfD;
-    const float uz = d_uYmid(ha, qya, hb, qyb, nx, ny, i, j);
-    const float ux = d_uxAtQyFace(ha, qxa, qya, hb, qxb, qyb, nx, ny, i, j);
+    const float z  = (static_cast<float>(j) + 1.f) * dx - halfD;
+    const float uz = d_uYmid(ha, qya, hb, qyb, nx, ny, i, j + 1);
+    const float ux = d_uxAtQyFace(ha, qxa, qya, hb, qxb, qyb, nx, ny, i, j + 1);
     const float xd = x - ux * dt;
     const float zd = z - uz * dt;
     const float fi = (xd + halfW) / dx - 0.5f;
-    const float fj = (zd + halfD) / dx;
-    qy_out[tid]    = d_sampleQy(qy_src, nx, ny, fi, fj);
+    const float fj = (zd + halfD) / dx - 1.f;
+    qy_out[tid]    = d_sampleQyCell(qy_src, nx, ny, fi, fj);
 }
 
 __global__ void transport_h_damp_k(float* h_tilde, const float* h1, const float* qx1, const float* qy1, int nx,
@@ -360,11 +387,11 @@ struct JtGpuScratch {
         JT_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_h1), ncell * sizeof(float)));
         JT_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_qx1), nqx * sizeof(float)));
         JT_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_qy1), nqy * sizeof(float)));
-        JT_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_qx_tilde), nqx * sizeof(float)));
-        JT_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_qy_tilde), nqy * sizeof(float)));
+        JT_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_qx_tilde), ncell * sizeof(float)));
+        JT_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_qy_tilde), ncell * sizeof(float)));
         JT_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_h_tilde), ncell * sizeof(float)));
-        JT_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_qx_saved), nqx * sizeof(float)));
-        JT_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_qy_saved), nqy * sizeof(float)));
+        JT_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_qx_saved), ncell * sizeof(float)));
+        JT_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_qy_saved), ncell * sizeof(float)));
         JT_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_h_saved), ncell * sizeof(float)));
     }
 };
@@ -374,30 +401,26 @@ JtGpuScratch g_jt;
 void runTransportKernels(int nx, int ny, float dx, float halfW, float halfD, float dt, float gamma) {
     constexpr int threads = 256;
     const size_t  ncell   = static_cast<size_t>(nx) * static_cast<size_t>(ny);
-    const size_t  nqx     = static_cast<size_t>(nx + 1) * static_cast<size_t>(ny);
-    const size_t  nqy     = static_cast<size_t>(nx) * static_cast<size_t>(ny + 1);
-    const int     nqxN    = static_cast<int>(nqx);
-    const int     nqyN    = static_cast<int>(nqy);
     const int     ncellN  = static_cast<int>(ncell);
 
-    transport_qx_damp_k<<<jt_blocks_for(nqxN, threads), threads>>>(
+    transport_qx_damp_k<<<jt_blocks_for(ncellN, threads), threads>>>(
         g_jt.d_qx_tilde, g_jt.d_h0, g_jt.d_qx0, g_jt.d_qy0, g_jt.d_h1, g_jt.d_qx1, g_jt.d_qy1, nx, ny, dx, gamma, dt);
     JT_POST_KERNEL();
 
-    transport_qy_damp_k<<<jt_blocks_for(nqyN, threads), threads>>>(
+    transport_qy_damp_k<<<jt_blocks_for(ncellN, threads), threads>>>(
         g_jt.d_qy_tilde, g_jt.d_h0, g_jt.d_qx0, g_jt.d_qy0, g_jt.d_h1, g_jt.d_qx1, g_jt.d_qy1, nx, ny, dx, gamma, dt);
     JT_POST_KERNEL();
 
     JT_CUDA_CHECK(
-        cudaMemcpy(g_jt.d_qx_saved, g_jt.d_qx_tilde, nqx * sizeof(float), cudaMemcpyDeviceToDevice));
-    transport_qx_advect_k<<<jt_blocks_for(nqxN, threads), threads>>>(
+        cudaMemcpy(g_jt.d_qx_saved, g_jt.d_qx_tilde, ncell * sizeof(float), cudaMemcpyDeviceToDevice));
+    transport_qx_advect_k<<<jt_blocks_for(ncellN, threads), threads>>>(
         g_jt.d_qx_tilde, g_jt.d_qx_saved, g_jt.d_h0, g_jt.d_qx0, g_jt.d_qy0, g_jt.d_h1, g_jt.d_qx1, g_jt.d_qy1, nx, ny,
         dx, halfW, halfD, dt);
     JT_POST_KERNEL();
 
     JT_CUDA_CHECK(
-        cudaMemcpy(g_jt.d_qy_saved, g_jt.d_qy_tilde, nqy * sizeof(float), cudaMemcpyDeviceToDevice));
-    transport_qy_advect_k<<<jt_blocks_for(nqyN, threads), threads>>>(
+        cudaMemcpy(g_jt.d_qy_saved, g_jt.d_qy_tilde, ncell * sizeof(float), cudaMemcpyDeviceToDevice));
+    transport_qy_advect_k<<<jt_blocks_for(ncellN, threads), threads>>>(
         g_jt.d_qy_tilde, g_jt.d_qy_saved, g_jt.d_h0, g_jt.d_qx0, g_jt.d_qy0, g_jt.d_h1, g_jt.d_qx1, g_jt.d_qy1, nx, ny,
         dx, halfW, halfD, dt);
     JT_POST_KERNEL();
@@ -444,9 +467,9 @@ void transportSurfaceGpu(WaveDecomposition& dec, const Grid& gBar0, const Grid& 
     BP_JT_CUDA_OK(
         cudaMemcpy(bp_jt_detail::g_jt.d_qy1, gBar1.qy.data(), nqy * sizeof(float), cudaMemcpyHostToDevice));
     BP_JT_CUDA_OK(
-        cudaMemcpy(bp_jt_detail::g_jt.d_qx_tilde, dec.qx_tilde.data(), nqx * sizeof(float), cudaMemcpyHostToDevice));
+        cudaMemcpy(bp_jt_detail::g_jt.d_qx_tilde, dec.qx_tilde.data(), ncell * sizeof(float), cudaMemcpyHostToDevice));
     BP_JT_CUDA_OK(
-        cudaMemcpy(bp_jt_detail::g_jt.d_qy_tilde, dec.qy_tilde.data(), nqy * sizeof(float), cudaMemcpyHostToDevice));
+        cudaMemcpy(bp_jt_detail::g_jt.d_qy_tilde, dec.qy_tilde.data(), ncell * sizeof(float), cudaMemcpyHostToDevice));
     BP_JT_CUDA_OK(
         cudaMemcpy(bp_jt_detail::g_jt.d_h_tilde, dec.h_tilde.data(), ncell * sizeof(float), cudaMemcpyHostToDevice));
 
@@ -454,9 +477,9 @@ void transportSurfaceGpu(WaveDecomposition& dec, const Grid& gBar0, const Grid& 
 
     BP_JT_CUDA_OK(cudaDeviceSynchronize());
 
-    BP_JT_CUDA_OK(cudaMemcpy(dec.qx_tilde.data(), bp_jt_detail::g_jt.d_qx_tilde, nqx * sizeof(float),
+    BP_JT_CUDA_OK(cudaMemcpy(dec.qx_tilde.data(), bp_jt_detail::g_jt.d_qx_tilde, ncell * sizeof(float),
                              cudaMemcpyDeviceToHost));
-    BP_JT_CUDA_OK(cudaMemcpy(dec.qy_tilde.data(), bp_jt_detail::g_jt.d_qy_tilde, nqy * sizeof(float),
+    BP_JT_CUDA_OK(cudaMemcpy(dec.qy_tilde.data(), bp_jt_detail::g_jt.d_qy_tilde, ncell * sizeof(float),
                              cudaMemcpyDeviceToHost));
     BP_JT_CUDA_OK(cudaMemcpy(dec.h_tilde.data(), bp_jt_detail::g_jt.d_h_tilde, ncell * sizeof(float),
                              cudaMemcpyDeviceToHost));
@@ -477,15 +500,15 @@ void transportSurfaceGpuDevice(float* d_bar0_h, float* d_bar0_qx, float* d_bar0_
     BP_JT_CUDA_OK(cudaMemcpy(bp_jt_detail::g_jt.d_h1, d_bar1_h, ncell * sizeof(float), cudaMemcpyDeviceToDevice));
     BP_JT_CUDA_OK(cudaMemcpy(bp_jt_detail::g_jt.d_qx1, d_bar1_qx, nqx * sizeof(float), cudaMemcpyDeviceToDevice));
     BP_JT_CUDA_OK(cudaMemcpy(bp_jt_detail::g_jt.d_qy1, d_bar1_qy, nqy * sizeof(float), cudaMemcpyDeviceToDevice));
-    BP_JT_CUDA_OK(cudaMemcpy(bp_jt_detail::g_jt.d_qx_tilde, d_qx_tilde, nqx * sizeof(float), cudaMemcpyDeviceToDevice));
-    BP_JT_CUDA_OK(cudaMemcpy(bp_jt_detail::g_jt.d_qy_tilde, d_qy_tilde, nqy * sizeof(float), cudaMemcpyDeviceToDevice));
+    BP_JT_CUDA_OK(cudaMemcpy(bp_jt_detail::g_jt.d_qx_tilde, d_qx_tilde, ncell * sizeof(float), cudaMemcpyDeviceToDevice));
+    BP_JT_CUDA_OK(cudaMemcpy(bp_jt_detail::g_jt.d_qy_tilde, d_qy_tilde, ncell * sizeof(float), cudaMemcpyDeviceToDevice));
     BP_JT_CUDA_OK(cudaMemcpy(bp_jt_detail::g_jt.d_h_tilde, d_h_tilde, ncell * sizeof(float), cudaMemcpyDeviceToDevice));
 
     bp_jt_detail::runTransportKernels(nx, ny, dx, halfW, halfD, dt, gamma);
 
     BP_JT_CUDA_OK(cudaDeviceSynchronize());
 
-    BP_JT_CUDA_OK(cudaMemcpy(d_qx_tilde, bp_jt_detail::g_jt.d_qx_tilde, nqx * sizeof(float), cudaMemcpyDeviceToDevice));
-    BP_JT_CUDA_OK(cudaMemcpy(d_qy_tilde, bp_jt_detail::g_jt.d_qy_tilde, nqy * sizeof(float), cudaMemcpyDeviceToDevice));
+    BP_JT_CUDA_OK(cudaMemcpy(d_qx_tilde, bp_jt_detail::g_jt.d_qx_tilde, ncell * sizeof(float), cudaMemcpyDeviceToDevice));
+    BP_JT_CUDA_OK(cudaMemcpy(d_qy_tilde, bp_jt_detail::g_jt.d_qy_tilde, ncell * sizeof(float), cudaMemcpyDeviceToDevice));
     BP_JT_CUDA_OK(cudaMemcpy(d_h_tilde, bp_jt_detail::g_jt.d_h_tilde, ncell * sizeof(float), cudaMemcpyDeviceToDevice));
 }

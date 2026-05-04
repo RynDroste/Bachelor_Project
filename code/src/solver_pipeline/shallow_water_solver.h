@@ -11,6 +11,7 @@ struct Grid {
     std::vector<float> qx;
     std::vector<float> qy;
     std::vector<float> terrain;
+    std::vector<float> foam;
 
     Grid(int nx, int ny, float cell_size, float timestep);
 

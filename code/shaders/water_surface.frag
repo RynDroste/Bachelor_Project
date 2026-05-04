@@ -24,8 +24,10 @@ uniform int uWaterBodyLitOnly;
 uniform float uDx;
 uniform float uHalfW;
 uniform float uHalfD;
+uniform vec2 uSweCenterXZ;
 uniform sampler2D uH;
 uniform sampler2D uB;
+uniform sampler2D uFoam;
 uniform float uWetDepthEps;
 uniform float uTime;
 uniform float uWaveScale;
@@ -241,14 +243,16 @@ void main() {
     // flat-bedded open water (B=0) so the lighting still looks like deep
     // water instead of discarding the fragment.
     ivec2 sz = textureSize(uH, 0);
+    vec2 localXZ = vWorldPos.xz - uSweCenterXZ;
     vec2 uv = vec2(
-        (vWorldPos.x + uHalfW) / (float(sz.x) * uDx),
-        (vWorldPos.z + uHalfD) / (float(sz.y) * uDx));
+        (localXZ.x + uHalfW) / (float(sz.x) * uDx),
+        (localXZ.y + uHalfD) / (float(sz.y) * uDx));
     bool inSwe = all(greaterThanEqual(uv, vec2(0.0))) &&
                  all(lessThan(uv, vec2(1.0)));
     vec2 uvC = clamp(uv, vec2(0.0), vec2(0.9999));
 
     float bTerrain = 0.0;
+    float foamMask = 0.0;
     if (inSwe) {
         float hCell = texture(uH, uvC).r;
         // Only discard well inside the window; near the boundary we feather
@@ -257,6 +261,8 @@ void main() {
             discard;
         float bSampled = texture(uB, uvC).r;
         bTerrain = mix(0.0, bSampled, vSweEdge);
+        float fSampled = texture(uFoam, uvC).r;
+        foamMask = smoothstep(0.20, 0.80, clamp(fSampled, 0.0, 1.0)) * vSweEdge;
     }
     float surfaceToBed = max(vWorldPos.y - bTerrain, 0.0);
     float depthNorm = clamp(surfaceToBed / kDepthCurveMax, 0.0, 1.0);
@@ -357,6 +363,8 @@ void main() {
     vec3 glass = glassBSDF(N, V, screenUV, refractOff, planar, reflOk, gl_FragCoord.z, base);
 
     vec3 rgb = bodyLit + spec + glass + emission + sss;
+    rgb = mix(rgb, vec3(0.92, 0.95, 0.98), foamMask * 0.80);
+    waterAlpha = mix(waterAlpha, 0.95, foamMask * 0.60);
 
     if (dot(uDebugTint, uDebugTint) > 1e-6)
         rgb = mix(rgb, uDebugTint, 0.55);

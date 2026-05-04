@@ -10,6 +10,7 @@ Grid::Grid(int nx, int ny, float cell_size, float timestep)
     , qx      ((nx+1) * ny,    0.f)
     , qy      (nx * (ny+1),    0.f)
     , terrain (nx * ny,        0.f)
+    , foam    (nx * ny,        0.f)
 {}
 
 float& Grid::H(int i, int j)       { return h[i + j*NX]; }
@@ -33,6 +34,7 @@ void gridSlideDomain(Grid& g, int di, int dj, float restH) {
 
     std::vector<float> newH(static_cast<size_t>(NX) * NY, restH);
     std::vector<float> newT(static_cast<size_t>(NX) * NY, 0.0f);
+    std::vector<float> newF(static_cast<size_t>(NX) * NY, 0.0f);
     std::vector<float> newQx(static_cast<size_t>(NX + 1) * NY, 0.0f);
     std::vector<float> newQy(static_cast<size_t>(NX) * (NY + 1), 0.0f);
 
@@ -53,6 +55,9 @@ void gridSlideDomain(Grid& g, int di, int dj, float restH) {
                         static_cast<size_t>(len) * sizeof(float));
             std::memcpy(&newT[i0dst + static_cast<size_t>(j) * NX],
                         &g.terrain[srcI + static_cast<size_t>(srcJ) * NX],
+                        static_cast<size_t>(len) * sizeof(float));
+            std::memcpy(&newF[i0dst + static_cast<size_t>(j) * NX],
+                        &g.foam[srcI + static_cast<size_t>(srcJ) * NX],
                         static_cast<size_t>(len) * sizeof(float));
         }
     }
@@ -98,6 +103,7 @@ void gridSlideDomain(Grid& g, int di, int dj, float restH) {
     g.qx      = std::move(newQx);
     g.qy      = std::move(newQy);
     g.terrain = std::move(newT);
+    g.foam    = std::move(newF);
 }
 
 ShallowWaterDiagnostics gridShallowWaterDiagnostics(const Grid& g, float gravity, float dryEps) {

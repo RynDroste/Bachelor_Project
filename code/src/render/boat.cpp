@@ -13,7 +13,7 @@ namespace {
 constexpr float kDryEps   = 1e-4f;
 constexpr float kMaxSpeed = 16.f;
 constexpr float kTurnGain = 1.2f;
-constexpr float kPointQStrength = 640.f;
+constexpr float kPointQStrength = 1640.f;
 
 float sampleH(const Grid& g, int i, int j) {
     i = std::clamp(i, 0, g.NX - 1);
@@ -138,17 +138,57 @@ void applyBoatForcing(Boat& boat, Grid& g, glm::vec2 sweCenterXZ, float halfW, f
     const float dirZ = vz / vlen;
     const float dq = kPointQStrength * boat.draft * vlen * dt;
 
-    const int i = ic;
-    const int j = jc;
+    // Spread the forcing over an elliptical Gaussian footprint matching the boat's
+    // hull (length along heading, width across). A single-cell point source produced
+    // a 1-pixel-wide foam streak; using a finite footprint gives the wake real width.
+    const float halfLen = std::max(0.5f * boat.length, g.dx);
+    const float halfWid = std::max(0.5f * boat.width, g.dx);
+    const float cosH = dirX;
+    const float sinH = dirZ;
+    const int   rad  = static_cast<int>(std::ceil(halfLen / g.dx)) + 1;
+    const float invHalfLen2 = 1.f / (halfLen * halfLen);
+    const float invHalfWid2 = 1.f / (halfWid * halfWid);
 
-    if (dirX >= 0.f) {
-        g.QX(i + 1, j) += dq * dirX;
-    } else {
-        g.QX(i, j) += dq * dirX;
+    float wsum = 0.f;
+    for (int dj = -rad; dj <= rad; ++dj) {
+        for (int di = -rad; di <= rad; ++di) {
+            const float lx =  cosH * (di * g.dx) + sinH * (dj * g.dx);
+            const float ly = -sinH * (di * g.dx) + cosH * (dj * g.dx);
+            const float r2 = lx * lx * invHalfLen2 + ly * ly * invHalfWid2;
+            if (r2 > 1.f)
+                continue;
+            wsum += std::exp(-3.f * r2);
+        }
     }
-    if (dirZ >= 0.f) {
-        g.QY(i, j + 1) += dq * dirZ;
-    } else {
-        g.QY(i, j) += dq * dirZ;
+    if (wsum < 1e-6f)
+        return;
+    const float invWsum = 1.f / wsum;
+
+    for (int dj = -rad; dj <= rad; ++dj) {
+        for (int di = -rad; di <= rad; ++di) {
+            const int ii = ic + di;
+            const int jj = jc + dj;
+            if (ii < 1 || ii >= g.NX - 1 || jj < 1 || jj >= g.NY - 1)
+                continue;
+            if (g.H(ii, jj) < kDryEps)
+                continue;
+            const float lx =  cosH * (di * g.dx) + sinH * (dj * g.dx);
+            const float ly = -sinH * (di * g.dx) + cosH * (dj * g.dx);
+            const float r2 = lx * lx * invHalfLen2 + ly * ly * invHalfWid2;
+            if (r2 > 1.f)
+                continue;
+            const float w = std::exp(-3.f * r2) * invWsum;
+
+            if (dirX >= 0.f) {
+                g.QX(ii + 1, jj) += w * dq * dirX;
+            } else {
+                g.QX(ii, jj) += w * dq * dirX;
+            }
+            if (dirZ >= 0.f) {
+                g.QY(ii, jj + 1) += w * dq * dirZ;
+            } else {
+                g.QY(ii, jj) += w * dq * dirZ;
+            }
+        }
     }
 }

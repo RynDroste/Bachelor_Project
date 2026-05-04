@@ -23,8 +23,8 @@ import argparse
 
 import numpy as np
 
-GRID_W_DEFAULT = 256
-GRID_H_DEFAULT = 256
+GRID_W_DEFAULT = 512
+GRID_H_DEFAULT = 512
 
 BED_HEIGHT_DEFAULT = 0.0
 

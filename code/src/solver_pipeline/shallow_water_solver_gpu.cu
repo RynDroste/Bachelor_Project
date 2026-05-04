@@ -33,6 +33,14 @@ constexpr float kG         = 9.81f;
 constexpr float kDryEps    = 1e-3f;
 constexpr float kCflFactor = 75.f;
 constexpr float kCflWave   = 0.8f;
+constexpr float kFoamGradThreshold = 0.20f;
+constexpr float kFoamSpeedThreshold = 1.00f;
+constexpr float kFoamSpawnGrad = 0.08f;
+constexpr float kFoamSpawnSpeed = 0.03f;
+constexpr float kFoamDecay = 0.985f;
+constexpr float kFoamDryDecay = 0.90f;
+// Set false to disable speed-based foam spawn (avoids central wake stripe from high |u|).
+constexpr bool kFoamEnableSpeedSpawn = false;
 
 __device__ __forceinline__ int idxH(int i, int j, int nx) { return i + j * nx; }
 __device__ __forceinline__ int idxQX(int i, int j, int nx) { return i + j * (nx + 1); }
@@ -291,6 +299,52 @@ __global__ void clamp_face_qy_k(float* qy, const float* h, int nx, int ny, float
     qy[idxQY(i, j, nx)] = clampf(qy[idxQY(i, j, nx)], -qmax, qmax);
 }
 
+__global__ void update_foam_k(const float* h, const float* qx, const float* qy, const float* terrain,
+                              const float* foam_in, float* foam_out, int nx, int ny, float dx) {
+    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    const int j = blockIdx.y * blockDim.y + threadIdx.y;
+    if (i >= nx || j >= ny)
+        return;
+
+    const int   id = idxH(i, j, nx);
+    const float hC = h[id];
+    float       foam = foam_in[id];
+    if (hC < kDryEps) {
+        foam_out[id] = clampf(foam * kFoamDryDecay, 0.f, 1.f);
+        return;
+    }
+
+    const int im = max(0, i - 1);
+    const int ip = min(nx - 1, i + 1);
+    const int jm = max(0, j - 1);
+    const int jp = min(ny - 1, j + 1);
+
+    const float etaC = terrain[idxH(i, j, nx)] + hC;
+    const float etaL = terrain[idxH(im, j, nx)] + h[idxH(im, j, nx)];
+    const float etaR = terrain[idxH(ip, j, nx)] + h[idxH(ip, j, nx)];
+    const float etaD = terrain[idxH(i, jm, nx)] + h[idxH(i, jm, nx)];
+    const float etaU = terrain[idxH(i, jp, nx)] + h[idxH(i, jp, nx)];
+
+    const float dEtaDx = (etaR - etaL) / (fmaxf(1, ip - im) * dx);
+    const float dEtaDy = (etaU - etaD) / (fmaxf(1, jp - jm) * dx);
+    const float gradMag = sqrtf(dEtaDx * dEtaDx + dEtaDy * dEtaDy);
+
+    float spawn = 0.f;
+    if (gradMag > kFoamGradThreshold)
+        spawn += kFoamSpawnGrad * (gradMag - kFoamGradThreshold);
+    if (kFoamEnableSpeedSpawn) {
+        const float hu    = 0.5f * (qx[idxQX(i, j, nx)] + qx[idxQX(i + 1, j, nx)]);
+        const float hv    = 0.5f * (qy[idxQY(i, j, nx)] + qy[idxQY(i, j + 1, nx)]);
+        const float invH  = 1.0f / fmaxf(hC, kDryEps);
+        const float speed = sqrtf((hu * invH) * (hu * invH) + (hv * invH) * (hv * invH));
+        if (speed > kFoamSpeedThreshold)
+            spawn += kFoamSpawnSpeed * (speed - kFoamSpeedThreshold);
+    }
+
+    foam = foam * kFoamDecay + spawn;
+    foam_out[id] = clampf(foam, 0.f, 1.f);
+}
+
 void launchBoundary(float* d_qx, float* d_qy, const float* d_h, const float* d_terrain, int nx, int ny) {
     const int t1 = 256;
     bc_domain_qx_k<<<(ny + t1 - 1) / t1, t1>>>(d_qx, nx, ny);
@@ -325,6 +379,8 @@ struct SweGpuBuffers {
     float* d_qx_new = nullptr;
     float* d_qy_new = nullptr;
     float* d_h_new  = nullptr;
+    float* d_foam   = nullptr;
+    float* d_foam_new = nullptr;
 
     ~SweGpuBuffers() {
         cudaFree(d_h);
@@ -334,6 +390,8 @@ struct SweGpuBuffers {
         cudaFree(d_qx_new);
         cudaFree(d_qy_new);
         cudaFree(d_h_new);
+        cudaFree(d_foam);
+        cudaFree(d_foam_new);
     }
 
     void ensure(int nxIn, int nyIn) {
@@ -348,7 +406,9 @@ struct SweGpuBuffers {
         cudaFree(d_qx_new);
         cudaFree(d_qy_new);
         cudaFree(d_h_new);
-        d_h = d_qx = d_qy = d_terrain = d_qx_new = d_qy_new = d_h_new = nullptr;
+        cudaFree(d_foam);
+        cudaFree(d_foam_new);
+        d_h = d_qx = d_qy = d_terrain = d_qx_new = d_qy_new = d_h_new = d_foam = d_foam_new = nullptr;
 
         nx = nxIn;
         ny = nyIn;
@@ -364,6 +424,8 @@ struct SweGpuBuffers {
         SWE_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_qx_new), nqx * sizeof(float)));
         SWE_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_qy_new), nqy * sizeof(float)));
         SWE_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_h_new), ncell * sizeof(float)));
+        SWE_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_foam), ncell * sizeof(float)));
+        SWE_CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_foam_new), ncell * sizeof(float)));
     }
 };
 
@@ -376,6 +438,7 @@ void uploadGridToDevice(const Grid& g) {
     SWE_CUDA_CHECK(cudaMemcpy(g_swe.d_h, g.h.data(), ncell * sizeof(float), cudaMemcpyHostToDevice));
     SWE_CUDA_CHECK(cudaMemcpy(g_swe.d_qx, g.qx.data(), nqx * sizeof(float), cudaMemcpyHostToDevice));
     SWE_CUDA_CHECK(cudaMemcpy(g_swe.d_qy, g.qy.data(), nqy * sizeof(float), cudaMemcpyHostToDevice));
+    SWE_CUDA_CHECK(cudaMemcpy(g_swe.d_foam, g.foam.data(), ncell * sizeof(float), cudaMemcpyHostToDevice));
     if (!bp_gpu::sweTerrainDeviceMatchesHostCache(g.terrain.data(), ncell)) {
         SWE_CUDA_CHECK(
             cudaMemcpy(g_swe.d_terrain, g.terrain.data(), ncell * sizeof(float), cudaMemcpyHostToDevice));
@@ -390,6 +453,7 @@ void downloadGridToHost(Grid& g) {
     SWE_CUDA_CHECK(cudaMemcpy(g.h.data(), g_swe.d_h, ncell * sizeof(float), cudaMemcpyDeviceToHost));
     SWE_CUDA_CHECK(cudaMemcpy(g.qx.data(), g_swe.d_qx, nqx * sizeof(float), cudaMemcpyDeviceToHost));
     SWE_CUDA_CHECK(cudaMemcpy(g.qy.data(), g_swe.d_qy, nqy * sizeof(float), cudaMemcpyDeviceToHost));
+    SWE_CUDA_CHECK(cudaMemcpy(g.foam.data(), g_swe.d_foam, ncell * sizeof(float), cudaMemcpyDeviceToHost));
 }
 
 void uploadTerrainOnly(const Grid& g) {
@@ -424,6 +488,10 @@ void runSweStepKernelsNoSync(int nx, int ny, float dx, float dt) {
 
     launchBoundary(g_swe.d_qx, g_swe.d_qy, g_swe.d_h, g_swe.d_terrain, nx, ny);
     launchClampFaceQ(g_swe.d_qx, g_swe.d_qy, g_swe.d_h, nx, ny, dx, dt);
+    update_foam_k<<<gbH, tb>>>(g_swe.d_h, g_swe.d_qx, g_swe.d_qy, g_swe.d_terrain, g_swe.d_foam, g_swe.d_foam_new,
+                               nx, ny, dx);
+    SWE_POST_KERNEL();
+    std::swap(g_swe.d_foam, g_swe.d_foam_new);
 }
 
 void runBoundaryAndClampNoSync(int nx, int ny, float dx, float dt) {

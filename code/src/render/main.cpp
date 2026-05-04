@@ -41,14 +41,14 @@
 
 namespace {
 
-constexpr int   kNx = 256;
-constexpr int   kNy = 256;
+constexpr int   kNx = 512;
+constexpr int   kNy = 512;
 constexpr float kDx = 1.0f;
 // Nominal/max internal timestep for SWE kernels (subdivide wall-clock frame into steps <= this).
 constexpr float kDt = 1.0f / 120.0f;
-constexpr bool  kCoupledStep = true;
-constexpr bool  kSplitCompareSwe = true;
-constexpr float kGradPenaltyD = 0.25f;
+constexpr bool  kCoupledStep = false;
+constexpr bool  kSplitCompareSwe = false;
+constexpr float kGradPenaltyD = 0.05f;
 constexpr bool  kVsync          = false;
 constexpr int   kWindowWidth    = 1280;
 constexpr int   kWindowHeight   = 720;
@@ -57,7 +57,7 @@ constexpr float kCamFovDeg      = 55.f;
 constexpr float kCamTargetY     = 3.5f;
 constexpr glm::vec3 kFixedCamEye(70.956f, 44.f, 81.118f);
 constexpr glm::vec3 kFixedCamTarget(0.f, kCamTargetY, 0.f);
-constexpr float kReflectPlaneY = 4.0f;
+constexpr float kReflectPlaneY = 6.0f;
 constexpr float kEtaRef = kReflectPlaneY;
 constexpr float kWetDepthEps = 1e-3f;
 constexpr float kShoreBlendRange = 2.0f;
@@ -82,10 +82,10 @@ constexpr float kTerrainMaterialUvScale = 0.035f;
 
 // Geo-clipmap extending water+terrain out past the small SWE window.
 // Level 0 step matches the SWE cell (1 m), level 0 covers exactly the SWE
-// domain (2*N*d0 == kNx*kDx with N=128, d0=1.0). Each outer level doubles
+// domain (2*N*d0 == kNx*kDx with N=256, d0=1.0). Each outer level doubles
 // the step and quadruples the footprint.
-constexpr int   kClipmapN           = 128;
-constexpr int   kClipmapL           = 5;    // level 4 covers 4096 m square (~> clipFar=500 m)
+constexpr int   kClipmapN           = 256;
+constexpr int   kClipmapL           = 5;    // level 4 covers 8192 m square (~> clipFar=4000 m)
 constexpr float kClipmapBaseSpacing = kDx;
 
 // Cycle of distinct tint colors used to visualise clipmap levels at the seams.
@@ -108,7 +108,7 @@ static glm::vec3 clipmapLevelTint(int level) {
 // axis, we snap the window back to centre on the boat (quantised to dx). The trigger
 // should be a small fraction of halfW/halfD so the boat's wake region stays well inside
 // the window at all times.
-constexpr float kSweSlideTrigger = 24.f;  // metres
+constexpr float kSweSlideTrigger = 120.f;  // metres
 
 GLuint compileShader(GLenum type, const char* src) {
     GLuint s = glCreateShader(type);
@@ -190,6 +190,12 @@ void uploadTerrainTexture(const Grid& g, GLuint texB) {
 void uploadWaterDepthTexture(const Grid& g, GLuint texH) {
     glBindTexture(GL_TEXTURE_2D, texH);
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, g.NX, g.NY, GL_RED, GL_FLOAT, g.h.data());
+    glBindTexture(GL_TEXTURE_2D, 0);
+}
+
+void uploadFoamTexture(const Grid& g, GLuint texF) {
+    glBindTexture(GL_TEXTURE_2D, texF);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, g.NX, g.NY, GL_RED, GL_FLOAT, g.foam.data());
     glBindTexture(GL_TEXTURE_2D, 0);
 }
 
@@ -517,6 +523,7 @@ int main() {
     GLint locWaterDebugTint    = glGetUniformLocation(prog, "uDebugTint");
     GLint locTexH = glGetUniformLocation(prog, "uH");
     GLint locTexB = glGetUniformLocation(prog, "uB");
+    GLint locTexFoam = glGetUniformLocation(prog, "uFoam");
     GLint locReflTex = glGetUniformLocation(prog, "uReflectionTex");
     GLint locReflVP  = glGetUniformLocation(prog, "uReflViewProj");
     GLint locWetEps  = glGetUniformLocation(prog, "uWetDepthEps");
@@ -579,8 +586,18 @@ int main() {
         }
     }
 
-    GLuint texH = 0, texB = 0;
+    GLuint texH = 0, texB = 0, texFoam = 0;
     allocGridTextures(kNx, kNy, texH, texB);
+    glGenTextures(1, &texFoam);
+    glBindTexture(GL_TEXTURE_2D, texFoam);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+    const float zeroBorder[4] = {0.f, 0.f, 0.f, 0.f};
+    glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, zeroBorder);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F, kNx, kNy, 0, GL_RED, GL_FLOAT, nullptr);
+    glBindTexture(GL_TEXTURE_2D, 0);
     uploadTerrainTexture(g, texB);
 
     TerrainSand04Textures sandTex{};
@@ -794,6 +811,7 @@ int main() {
             glm::mat4 mvp       = proj * view;
 
             uploadWaterDepthTexture(grid, texH);
+            uploadFoamTexture(grid, texFoam);
             fillBoatSolidMesh(boatVerts, boat);
 
             ensureReflectionFBO(vpW, frame.fbH, reflFbo, reflColorTex, reflDepthRbo, reflBufW, reflBufH);
@@ -1030,6 +1048,10 @@ int main() {
             glBindTexture(GL_TEXTURE_2D, refractDepthTex);
             if (locSceneDepth >= 0)
                 glUniform1i(locSceneDepth, 4);
+            glActiveTexture(GL_TEXTURE5);
+            glBindTexture(GL_TEXTURE_2D, texFoam);
+            if (locTexFoam >= 0)
+                glUniform1i(locTexFoam, 5);
             glActiveTexture(GL_TEXTURE0);
 
             {
@@ -1110,6 +1132,7 @@ int main() {
         glDeleteProgram(boatProg);
     glDeleteTextures(1, &texH);
     glDeleteTextures(1, &texB);
+    glDeleteTextures(1, &texFoam);
     destroyTerrainSand04(sandTex);
     if (causticTex)
         glDeleteTextures(1, &causticTex);

@@ -13,7 +13,8 @@ namespace {
 constexpr float kDryEps   = 1e-4f;
 constexpr float kMaxSpeed = 16.f;
 constexpr float kTurnGain = 1.2f;
-constexpr float kPointQStrength = 1640.f;
+// Momentum injection into SWE (Qx/Qy); lower = weaker wake / less grid ringing.
+constexpr float kPointQStrength = 840.f;
 // Twin stern jets: each branch ± this yaw from hull axis (deg). Between ~15–30 gives a V wake.
 constexpr float kTwinJetYawDeg = 22.5f;
 

@@ -52,12 +52,14 @@ constexpr float kGradPenaltyD = 0.05f;
 constexpr bool  kVsync          = false;
 constexpr int   kWindowWidth    = 1280;
 constexpr int   kWindowHeight   = 720;
+// Default framebuffer MSAA (0 = off). 4 or 8 is typical; reduces geometry/edge aliasing.
+constexpr int   kMsaaSamples    = 8;
 constexpr int   kWaveDiffuseIters = 8; 
 constexpr float kCamFovDeg      = 55.f;
 constexpr float kCamTargetY     = 3.5f;
 constexpr glm::vec3 kFixedCamEye(70.956f, 44.f, 81.118f);
 constexpr glm::vec3 kFixedCamTarget(0.f, kCamTargetY, 0.f);
-constexpr float kReflectPlaneY = 10.0f;
+constexpr float kReflectPlaneY = 6.0f;
 constexpr float kEtaRef = kReflectPlaneY;
 constexpr float kWetDepthEps = 1e-3f;
 constexpr float kShoreBlendRange = 2.0f;
@@ -431,6 +433,8 @@ int main() {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     glfwWindowHint(GLFW_SRGB_CAPABLE, GLFW_TRUE);
+    if (kMsaaSamples > 0)
+        glfwWindowHint(GLFW_SAMPLES, kMsaaSamples);
 #ifdef __APPLE__
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
 #endif
@@ -452,6 +456,8 @@ int main() {
     }
 
     glEnable(GL_FRAMEBUFFER_SRGB);
+    if (kMsaaSamples > 0)
+        glEnable(GL_MULTISAMPLE);
 
     FrameCtx frame;
     glfwSetWindowUserPointer(window, &frame);

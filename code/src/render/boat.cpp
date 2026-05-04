@@ -14,6 +14,8 @@ constexpr float kDryEps   = 1e-4f;
 constexpr float kMaxSpeed = 16.f;
 constexpr float kTurnGain = 1.2f;
 constexpr float kPointQStrength = 1640.f;
+// Twin stern jets: each branch ± this yaw from hull axis (deg). Between ~15–30 gives a V wake.
+constexpr float kTwinJetYawDeg = 22.5f;
 
 float sampleH(const Grid& g, int i, int j) {
     i = std::clamp(i, 0, g.NX - 1);
@@ -134,17 +136,25 @@ void applyBoatForcing(Boat& boat, Grid& g, glm::vec2 sweCenterXZ, float halfW, f
     if (g.H(ic, jc) < kDryEps)
         return;
 
-    const float dirX = vx / vlen;
-    const float dirZ = vz / vlen;
     const float dq = kPointQStrength * boat.draft * vlen * dt;
+
+    // Hull-axis bisector for jet directions: forward along heading, astern uses opposite axis
+    // so reverse travel still models stern wash in hull frame.
+    constexpr float kPi = 3.14159265f;
+    const float       ax  = (boat.speed >= 0.f) ? th : th + kPi;
+    const float       yaw = kTwinJetYawDeg * (kPi / 180.f);
+    const float       dirLx = std::cos(ax + yaw);
+    const float       dirLz = std::sin(ax + yaw);
+    const float       dirRx = std::cos(ax - yaw);
+    const float       dirRz = std::sin(ax - yaw);
 
     // Spread the forcing over an elliptical Gaussian footprint matching the boat's
     // hull (length along heading, width across). A single-cell point source produced
     // a 1-pixel-wide foam streak; using a finite footprint gives the wake real width.
     const float halfLen = std::max(0.5f * boat.length, g.dx);
     const float halfWid = std::max(0.5f * boat.width, g.dx);
-    const float cosH = dirX;
-    const float sinH = dirZ;
+    const float cosH = std::cos(th);
+    const float sinH = std::sin(th);
     const int   rad  = static_cast<int>(std::ceil(halfLen / g.dx)) + 1;
     const float invHalfLen2 = 1.f / (halfLen * halfLen);
     const float invHalfWid2 = 1.f / (halfWid * halfWid);
@@ -178,17 +188,22 @@ void applyBoatForcing(Boat& boat, Grid& g, glm::vec2 sweCenterXZ, float halfW, f
             if (r2 > 1.f)
                 continue;
             const float w = std::exp(-3.f * r2) * invWsum;
+            const float dqHalf = 0.5f * w * dq;
 
-            if (dirX >= 0.f) {
-                g.QX(ii + 1, jj) += w * dq * dirX;
-            } else {
-                g.QX(ii, jj) += w * dq * dirX;
-            }
-            if (dirZ >= 0.f) {
-                g.QY(ii, jj + 1) += w * dq * dirZ;
-            } else {
-                g.QY(ii, jj) += w * dq * dirZ;
-            }
+            auto inject = [&](float jx, float jz, float mag) {
+                if (jx >= 0.f) {
+                    g.QX(ii + 1, jj) += mag * jx;
+                } else {
+                    g.QX(ii, jj) += mag * jx;
+                }
+                if (jz >= 0.f) {
+                    g.QY(ii, jj + 1) += mag * jz;
+                } else {
+                    g.QY(ii, jj) += mag * jz;
+                }
+            };
+            inject(dirLx, dirLz, dqHalf);
+            inject(dirRx, dirRz, dqHalf);
         }
     }
 }

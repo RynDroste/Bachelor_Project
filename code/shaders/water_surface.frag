@@ -363,8 +363,8 @@ void main() {
     vec3 glass = glassBSDF(N, V, screenUV, refractOff, planar, reflOk, gl_FragCoord.z, base);
 
     vec3 rgb = bodyLit + spec + glass + emission + sss;
-    rgb = mix(rgb, vec3(0.92, 0.95, 0.98), foamMask * 0.80);
-    waterAlpha = mix(waterAlpha, 0.95, foamMask * 0.60);
+    rgb = mix(rgb, vec3(0.92, 0.95, 0.98), foamMask * 0.60);
+    waterAlpha = mix(waterAlpha, 0.95, foamMask * 0.40);
 
     if (dot(uDebugTint, uDebugTint) > 1e-6)
         rgb = mix(rgb, uDebugTint, 0.55);

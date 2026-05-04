@@ -2,4 +2,6 @@ build/
 code/build/
 .DS_Store
 .idea/
+.vs/
+.vscode/
 .claude/

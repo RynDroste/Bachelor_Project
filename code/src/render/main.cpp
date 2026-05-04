@@ -57,7 +57,7 @@ constexpr float kCamFovDeg      = 55.f;
 constexpr float kCamTargetY     = 3.5f;
 constexpr glm::vec3 kFixedCamEye(70.956f, 44.f, 81.118f);
 constexpr glm::vec3 kFixedCamTarget(0.f, kCamTargetY, 0.f);
-constexpr float kReflectPlaneY = 6.0f;
+constexpr float kReflectPlaneY = 10.0f;
 constexpr float kEtaRef = kReflectPlaneY;
 constexpr float kWetDepthEps = 1e-3f;
 constexpr float kShoreBlendRange = 2.0f;

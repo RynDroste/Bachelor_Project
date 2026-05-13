@@ -10,6 +10,7 @@
 #include "solver_pipeline/airy_fftw.h"
 #include "solver_pipeline/pipeline.h"
 #include "render/boat.h"
+#include "render/obj_mesh.h"
 #include "render/scene_camera.h"
 #include "render/terrain_material.h"
 #include "render/shader_file.h"
@@ -17,6 +18,7 @@
 #include "render/skybox.h"
 #include "solver_pipeline/shallow_water_solver.h"
 #include "solver_pipeline/wavedecomposer.h"
+#include <stb_image.h>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -24,6 +26,7 @@
 #include <fstream>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #ifndef BP_TOOLS_ROOT
@@ -59,7 +62,7 @@ constexpr float kCamFovDeg      = 55.f;
 constexpr float kCamTargetY     = 3.5f;
 constexpr glm::vec3 kFixedCamEye(70.956f, 44.f, 81.118f);
 constexpr glm::vec3 kFixedCamTarget(0.f, kCamTargetY, 0.f);
-constexpr float kReflectPlaneY = 6.0f;
+constexpr float kReflectPlaneY = 7.0f;
 constexpr float kEtaRef = kReflectPlaneY;
 constexpr float kWetDepthEps = 1e-3f;
 constexpr float kShoreBlendRange = 2.0f;
@@ -111,6 +114,29 @@ static glm::vec3 clipmapLevelTint(int level) {
 // should be a small fraction of halfW/halfD so the boat's wake region stays well inside
 // the window at all times.
 constexpr float kSweSlideTrigger = 120.f;  // metres
+
+GLuint loadTexture2D(const char* path) {
+    int w, h, ch;
+    stbi_set_flip_vertically_on_load(1);
+    unsigned char* data = stbi_load(path, &w, &h, &ch, 4);
+    stbi_set_flip_vertically_on_load(0); // restore global state — cubemap loader must not inherit this
+    if (!data) {
+        std::fprintf(stderr, "loadTexture2D: failed to load '%s'\n", path);
+        return 0;
+    }
+    GLuint tex = 0;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
+    glGenerateMipmap(GL_TEXTURE_2D);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    stbi_image_free(data);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    return tex;
+}
 
 GLuint compileShader(GLenum type, const char* src) {
     GLuint s = glCreateShader(type);
@@ -316,69 +342,13 @@ void framebufferSizeCB(GLFWwindow* w, int width, int height) {
     glViewport(0, 0, width, height);
 }
 
-void fillBoatSolidMesh(std::vector<float>& out, const Boat& boat) {
-    out.clear();
-    out.reserve(6u * 3u * 12u);
+// OBJ model orientation constants.
 
-    constexpr float kVisDraft     = 0.28f;
-    constexpr float kVisFreeboard = 1.05f;
-
-    const float co = std::cos(boat.heading);
-    const float si = std::sin(boat.heading);
-    const float bx = boat.pos.x;
-    const float bz = boat.pos.y;
-    const float hL = boat.length * 0.5f;
-    const float hW = boat.width * 0.5f;
-    const float yBottom = boat.z - kVisDraft;
-    const float yTop = boat.z + kVisFreeboard;
-
-    auto P = [&](float u, float v, float y) {
-        return glm::vec3(bx + co * u - si * v, y, bz + si * u + co * v);
-    };
-
-    const glm::vec3 v0 = P(-hL, -hW, yBottom);
-    const glm::vec3 v1 = P(+hL, -hW, yBottom);
-    const glm::vec3 v2 = P(+hL, +hW, yBottom);
-    const glm::vec3 v3 = P(-hL, +hW, yBottom);
-    const glm::vec3 v4 = P(-hL, -hW, yTop);
-    const glm::vec3 v5 = P(+hL, -hW, yTop);
-    const glm::vec3 v6 = P(+hL, +hW, yTop);
-    const glm::vec3 v7 = P(-hL, +hW, yTop);
-
-    const glm::vec3 nBow = glm::normalize(glm::vec3(co, 0.f, si));
-    const glm::vec3 nStern = -nBow;
-    const glm::vec3 nStar = glm::normalize(glm::vec3(-si, 0.f, co));
-    const glm::vec3 nPort = -nStar;
-
-    auto pushTri = [&](const glm::vec3& a, const glm::vec3& b, const glm::vec3& c, const glm::vec3& n) {
-        const glm::vec3 no = glm::normalize(n);
-        for (const glm::vec3& p : {a, b, c}) {
-            out.push_back(p.x);
-            out.push_back(p.y);
-            out.push_back(p.z);
-            out.push_back(no.x);
-            out.push_back(no.y);
-            out.push_back(no.z);
-        }
-    };
-
-    pushTri(v0, v2, v1, glm::vec3(0.f, -1.f, 0.f));
-    pushTri(v0, v3, v2, glm::vec3(0.f, -1.f, 0.f));
-    pushTri(v4, v5, v6, glm::vec3(0.f, 1.f, 0.f));
-    pushTri(v4, v6, v7, glm::vec3(0.f, 1.f, 0.f));
-
-    pushTri(v1, v2, v5, nBow);
-    pushTri(v2, v6, v5, nBow);
-
-    pushTri(v0, v4, v3, nStern);
-    pushTri(v3, v4, v7, nStern);
-
-    pushTri(v2, v3, v6, nStar);
-    pushTri(v3, v7, v6, nStar);
-
-    pushTri(v0, v1, v4, nPort);
-    pushTri(v1, v5, v4, nPort);
-}
+constexpr float kBoatModelYawDeg   = 90.f;
+// Visual placement: how many world-units below boat.z to put the model origin (keel offset).
+constexpr float kBoatModelDraft    = 1.f;
+// Uniform scale applied to the raw OBJ coordinates.
+constexpr float kBoatModelScale    = 5.0f;
 
 }  // namespace
 
@@ -628,21 +598,65 @@ int main() {
         std::fprintf(stderr, "warning: boat shaders missing or failed to compile (tried %s)\n",
                      shaderPath("boat.vert").c_str());
     GLint locBoatMVP = boatProg ? glGetUniformLocation(boatProg, "uMVP") : -1;
+    GLint locBoatModel = boatProg ? glGetUniformLocation(boatProg, "uModel") : -1;
     GLint locBoatLight = boatProg ? glGetUniformLocation(boatProg, "uLightDir") : -1;
     GLint locBoatColor = boatProg ? glGetUniformLocation(boatProg, "uBaseColor") : -1;
     GLint locBoatClipRefl = boatProg ? glGetUniformLocation(boatProg, "uClipRefl") : -1;
     GLint locBoatWaterY = boatProg ? glGetUniformLocation(boatProg, "uWaterPlaneY") : -1;
+    GLint locBoatHasAlbedo = boatProg ? glGetUniformLocation(boatProg, "uHasAlbedo") : -1;
+    // Set the albedo sampler to texture unit 0 once here.
+    if (boatProg) {
+        glUseProgram(boatProg);
+        GLint locAlbedo = glGetUniformLocation(boatProg, "uAlbedo");
+        if (locAlbedo >= 0) glUniform1i(locAlbedo, 0);
+        glUseProgram(0);
+    }
+
+    ObjMesh boatMesh;
+    {
+        const std::string boatObjPath =
+            std::string(BP_TOOLS_ROOT) + "/uss-wisconsin-wows/Wisconsin.obj";
+        if (!boatMesh.load(boatObjPath))
+            std::fprintf(stderr, "warning: boat OBJ failed to load (%s)\n", boatObjPath.c_str());
+    }
+
+    // Load one GL texture per unique diffuse path; share across groups with the same texture.
+    std::unordered_map<std::string, GLuint> boatTexCache;
+    std::vector<GLuint> boatGroupTex(boatMesh.groups.size(), 0);
+    for (size_t gi = 0; gi < boatMesh.groups.size(); gi++) {
+        const std::string& tp = boatMesh.groups[gi].diffuseTex;
+        if (tp.empty()) continue;
+        auto it = boatTexCache.find(tp);
+        if (it != boatTexCache.end()) {
+            boatGroupTex[gi] = it->second;
+        } else {
+            GLuint t = loadTexture2D(tp.c_str());
+            boatTexCache[tp] = t;
+            boatGroupTex[gi] = t;
+        }
+    }
+
     GLuint boatVao = 0, boatVbo = 0;
     glGenVertexArrays(1, &boatVao);
     glGenBuffers(1, &boatVbo);
     glBindVertexArray(boatVao);
     glBindBuffer(GL_ARRAY_BUFFER, boatVbo);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(float) * 256, nullptr, GL_DYNAMIC_DRAW);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), reinterpret_cast<void*>(0));
+    if (!boatMesh.verts.empty()) {
+        glBufferData(GL_ARRAY_BUFFER,
+                     static_cast<GLsizeiptr>(boatMesh.verts.size() * sizeof(float)),
+                     boatMesh.verts.data(), GL_STATIC_DRAW);
+    } else {
+        glBufferData(GL_ARRAY_BUFFER, sizeof(float) * 8, nullptr, GL_STATIC_DRAW);
+    }
+    // pos(3) + normal(3) + uv(2) = 8 floats per vertex
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), reinterpret_cast<void*>(0));
     glEnableVertexAttribArray(0);
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float),
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float),
                           reinterpret_cast<void*>(3 * sizeof(float)));
     glEnableVertexAttribArray(1);
+    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float),
+                          reinterpret_cast<void*>(6 * sizeof(float)));
+    glEnableVertexAttribArray(2);
     glBindVertexArray(0);
 
     glEnable(GL_DEPTH_TEST);
@@ -664,8 +678,6 @@ int main() {
     boat.pos     = glm::vec2(0.f, 0.f);
     boat.heading = 0.f;
     boat.throttle = 0.f;
-    std::vector<float> boatVerts;
-    boatVerts.reserve(256);
 
     SceneCamera sceneCam;
     sceneCam.resetOrbitalFromEye(kFixedCamEye, boat);
@@ -818,7 +830,17 @@ int main() {
 
             uploadWaterDepthTexture(grid, texH);
             uploadFoamTexture(grid, texFoam);
-            fillBoatSolidMesh(boatVerts, boat);
+
+            // Build boat model matrix: translate to world pos, rotate by heading + fixed yaw
+            // to align the OBJ's Z-forward with world +X, then scale.
+            const glm::mat4 boatModel = [&]() {
+                glm::mat4 m = glm::translate(glm::mat4(1.f),
+                    glm::vec3(boat.pos.x, boat.z - kBoatModelDraft, boat.pos.y));
+                m = glm::rotate(m, -boat.heading + glm::radians(kBoatModelYawDeg),
+                                glm::vec3(0.f, 1.f, 0.f));
+                m = glm::scale(m, glm::vec3(kBoatModelScale));
+                return m;
+            }();
 
             ensureReflectionFBO(vpW, frame.fbH, reflFbo, reflColorTex, reflDepthRbo, reflBufW, reflBufH);
             if (reflFbo) {
@@ -832,10 +854,12 @@ int main() {
                 // view so that water surfaces sample the real sky in reflection.
                 skyboxDraw(skybox, proj, viewRefl);
 
-                if (boatProg) {
+                if (boatProg && boatMesh.vertexCount > 0) {
                     glUseProgram(boatProg);
                     const glm::mat4 mvpR = proj * viewRefl;
                     glUniformMatrix4fv(locBoatMVP, 1, GL_FALSE, glm::value_ptr(mvpR));
+                    if (locBoatModel >= 0)
+                        glUniformMatrix4fv(locBoatModel, 1, GL_FALSE, glm::value_ptr(boatModel));
                     glUniform3fv(locBoatLight, 1, glm::value_ptr(lightDir));
                     const glm::vec3 hullColor(0.78f, 0.44f, 0.2f);
                     glUniform3fv(locBoatColor, 1, glm::value_ptr(hullColor));
@@ -844,10 +868,14 @@ int main() {
                     if (locBoatWaterY >= 0)
                         glUniform1f(locBoatWaterY, kReflectPlaneY);
                     glBindVertexArray(boatVao);
-                    glBindBuffer(GL_ARRAY_BUFFER, boatVbo);
-                    glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(boatVerts.size() * sizeof(float)),
-                                    boatVerts.data());
-                    glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(boatVerts.size() / 6));
+                    for (size_t gi = 0; gi < boatMesh.groups.size(); gi++) {
+                        const GLuint t = (gi < boatGroupTex.size()) ? boatGroupTex[gi] : 0;
+                        glActiveTexture(GL_TEXTURE0);
+                        glBindTexture(GL_TEXTURE_2D, t);
+                        if (locBoatHasAlbedo >= 0) glUniform1i(locBoatHasAlbedo, t ? 1 : 0);
+                        const auto& grp = boatMesh.groups[gi];
+                        glDrawArrays(GL_TRIANGLES, grp.startVertex, grp.vertexCount);
+                    }
                     glBindVertexArray(0);
                     if (locBoatClipRefl >= 0)
                         glUniform1i(locBoatClipRefl, 0);
@@ -947,21 +975,27 @@ int main() {
                 glBindFramebuffer(GL_FRAMEBUFFER, 0);
             }
 
-            if (boatProg) {
+            if (boatProg && boatMesh.vertexCount > 0) {
                 glDisable(GL_BLEND);
                 glDepthMask(GL_TRUE);
                 glUseProgram(boatProg);
                 glUniformMatrix4fv(locBoatMVP, 1, GL_FALSE, glm::value_ptr(mvp));
+                if (locBoatModel >= 0)
+                    glUniformMatrix4fv(locBoatModel, 1, GL_FALSE, glm::value_ptr(boatModel));
                 glUniform3fv(locBoatLight, 1, glm::value_ptr(lightDir));
                 const glm::vec3 hullColor(0.78f, 0.44f, 0.2f);
                 glUniform3fv(locBoatColor, 1, glm::value_ptr(hullColor));
                 if (locBoatClipRefl >= 0)
                     glUniform1i(locBoatClipRefl, 0);
                 glBindVertexArray(boatVao);
-                glBindBuffer(GL_ARRAY_BUFFER, boatVbo);
-                glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(boatVerts.size() * sizeof(float)),
-                                boatVerts.data());
-                glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(boatVerts.size() / 6));
+                for (size_t gi = 0; gi < boatMesh.groups.size(); gi++) {
+                    const GLuint t = (gi < boatGroupTex.size()) ? boatGroupTex[gi] : 0;
+                    glActiveTexture(GL_TEXTURE0);
+                    glBindTexture(GL_TEXTURE_2D, t);
+                    if (locBoatHasAlbedo >= 0) glUniform1i(locBoatHasAlbedo, t ? 1 : 0);
+                    const auto& grp = boatMesh.groups[gi];
+                    glDrawArrays(GL_TRIANGLES, grp.startVertex, grp.vertexCount);
+                }
                 glBindVertexArray(0);
             }
 
@@ -1153,6 +1187,8 @@ int main() {
         glDeleteFramebuffers(1, &refractDepthFbo);
         glDeleteTextures(1, &refractDepthTex);
     }
+    for (auto& kv : boatTexCache)
+        if (kv.second) glDeleteTextures(1, &kv.second);
     glDeleteBuffers(1, &boatVbo);
     glDeleteVertexArrays(1, &boatVao);
     ImGui_ImplOpenGL3_Shutdown();

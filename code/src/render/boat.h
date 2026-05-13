@@ -11,7 +11,7 @@ struct Boat {
     float     speed = 0.f;
     float     z = 0.f;
 
-    float length = 10.f;
+    float length = 5.f;
     float width = 3.5f;
     float draft = 0.6f;
     float displacement = 12.f;

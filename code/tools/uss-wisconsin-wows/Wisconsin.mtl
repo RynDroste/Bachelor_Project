@@ -1,0 +1,884 @@
+newmtl 50688ec5-d251-4f37-8942-c1d98a9e598b
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/asb078_wisconsin_1945_a.jpg
+map_Ks textures/asb078_wisconsin_1945_mg.jpg
+map_normal textures/asb078_wisconsin_1945_n.png
+map_ao textures/asb078_wisconsin_1945_ao.jpg
+
+newmtl 159f4eff-8c4b-4da6-b7b1-17231d185c34
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/asb078_wisconsin_1945_deckhouse_a.jpg
+map_Ks textures/asb078_wisconsin_1945_deckhouse_mg.jpg
+map_normal textures/asb078_wisconsin_1945_deckhouse_n.png
+map_ao textures/asb078_wisconsin_1945_deckhouse_ao.jpg
+
+newmtl 29397235-8df5-42b7-9455-ebdd503a8560
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/c005_grid_2_alpha_a.jpg
+map_d textures/c005_grid_2_alpha_a_alpha.png
+
+newmtl 16c81bad-f714-4f01-9be8-a34037a075c2
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/asb078_wisconsin_1945_a.jpg
+map_Ks textures/default_wires_mg.jpg
+
+newmtl 3b8629ad-430a-4818-9ac5-94a09c245aa6
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/am115_rdf_a.jpg
+map_Ks textures/am115_rdf_mg.jpg
+map_normal textures/am115_rdf_n.png
+map_ao textures/default_ao.jpg
+
+newmtl 7904ea95-0253-4cd2-9480-01f8c13ca8a5
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/am019_ventilators_1_a.jpg
+map_Ks textures/am019_ventilators_1_mg.jpg
+map_normal textures/am019_ventilators_1_n.png
+map_ao textures/default_ao.jpg
+
+newmtl 8a044b5e-43c3-489c-97f1-d4c2dfa57d83
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/am024_hatch_2_a.jpg
+map_Ks textures/am024_hatch_2_mg.jpg
+map_normal textures/am024_hatch_2_n.png
+map_ao textures/default_ao.jpg
+
+newmtl 088a996e-e2e2-4664-bb7b-61f8d4b49c23
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/am077_paravane_a.jpg
+map_Ks textures/wm007_paravane_mg.jpg
+map_normal textures/wm007_paravane_n.png
+map_ao textures/default_ao.jpg
+
+newmtl 27f33578-aa64-4745-87fb-812f78156231
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/ad003_director_mk51_a.jpg
+map_Ks textures/ad003_director_mk51_mg.jpg
+map_normal textures/ad003_director_mk51_n.png
+map_ao textures/default_ao.jpg
+
+newmtl d64d06ec-1882-4ce2-adab-ad0a5a138d1e
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/aga090_20mm_oerlikon_mk4_a.jpg
+map_Ks textures/aga090_20mm_oerlikon_mk4_mg.jpg
+map_normal textures/aga090_20mm_oerlikon_mk4_n.png
+map_ao textures/aga090_20mm_oerlikon_mk4_ao.jpg
+
+newmtl 680ca9f6-6aef-4e39-afbe-c37cbfcf887b
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/aga056_40mm_bofors_a.jpg
+map_Ks textures/aga056_40mm_bofors_mg.jpg
+map_normal textures/aga056_40mm_bofors_n.png
+map_ao textures/aga056_40mm_bofors_ao.jpg
+
+newmtl 29c5fadc-a328-4cf3-a617-288afacdf663
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/aga056_40mm_bofors_a.jpg
+map_Ks textures/default_wires_mg.jpg
+
+newmtl c24b5462-c461-4f25-9eb6-d22847c30c61
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/agm034_16in50_mk7_a.jpg
+map_Ks textures/agm034_16in50_mk7_mg.jpg
+map_normal textures/agm034_16in50_mk7_n.png
+map_ao textures/agm034_16in50_mk7_ao.jpg
+
+newmtl 952e099d-73bd-4ca1-96b6-a337e6e6215b
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/am100_spare_barrel_tube_a.jpg
+map_Ks textures/am100_spare_barrel_tube_mg.jpg
+map_normal textures/am100_spare_barrel_tube_n.png
+map_ao textures/default_ao.jpg
+
+newmtl 2384a55b-8343-4734-aa00-18378963152e
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/am108_reels_4_a.jpg
+map_Ks textures/am108_reels_4_mg.jpg
+map_normal textures/am108_reels_4_n.png
+map_ao textures/default_ao.jpg
+
+newmtl 49cf56ef-c7b6-4373-9601-fe186c66858b
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/am157_telephone_a.jpg
+map_Ks textures/fm014_telephone_mg.jpg
+map_normal textures/default_n.png
+map_ao textures/default_ao.jpg
+
+newmtl 6bf8f887-d5fb-40e7-b95a-c06bf39a4ec0
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/am161_anchor_top_a.jpg
+map_Ks textures/am161_anchor_top_mg.jpg
+map_normal textures/am161_anchor_top_n.png
+map_ao textures/default_ao.jpg
+
+newmtl 4c0d832c-0f54-4f86-8d32-5fb2ca625947
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/am161_anchor_top_a.jpg
+map_Ks textures/am161_anchor_top_mg.jpg
+map_normal textures/am161_anchor_top_n.png
+map_ao textures/default_ao.jpg
+
+newmtl 8c9bdda8-522e-41b2-a390-08cdf66e3972
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/am219_bollard_a.jpg
+map_Ks textures/am219_bollard_mg.jpg
+map_normal textures/am219_bollard_n.png
+map_ao textures/default_ao.jpg
+
+newmtl b34e8424-785f-4264-b0bd-62b6639bb205
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/am442_multipole_switch_a.jpg
+map_Ks textures/wm631_multipole_switch_mg.jpg
+map_normal textures/wm631_multipole_switch_n.png
+map_ao textures/default_ao.jpg
+
+newmtl fdd48726-1274-484f-ab10-1da98a2a2d5b
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/am720_helmets_rack_a.jpg
+map_Ks textures/am720_helmets_rack_mg.jpg
+map_normal textures/am720_helmets_rack_n.png
+map_ao textures/default_ao.jpg
+
+newmtl e4aceaa7-6d16-46e5-b318-64bb02cbb70d
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/am725_ammobox_a.jpg
+map_Ks textures/am725_ammobox_mg.jpg
+map_normal textures/am725_ammobox_n.png
+map_ao textures/default_ao.jpg
+
+newmtl 9e4f7640-e051-48a1-9b61-599040beaf5f
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/cm010_fire_hose_reel_a.jpg
+map_Ks textures/cm010_fire_hose_reel_mg.jpg
+map_normal textures/cm010_fire_hose_reel_n.png
+map_ao textures/default_ao.jpg
+
+newmtl c6241412-1d2f-4b3e-a39e-04d0875c4b20
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/am727_hatch_a.jpg
+map_Ks textures/am727_hatch_mg.jpg
+map_normal textures/am727_hatch_n.png
+map_ao textures/default_ao.jpg
+
+newmtl cd11aa5f-2cd1-4985-a677-9b2e7ec75039
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/cm029_emergency_box_a.jpg
+map_Ks textures/cm029_emergency_box_mg.jpg
+map_normal textures/cm029_emergency_box_n.png
+map_ao textures/default_ao.jpg
+
+newmtl fa55bf4f-36fb-48b3-9b5b-6562dd32a4d1
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/cm104_life_buoy_a.jpg
+map_Ks textures/cm104_life_buoy_mg.jpg
+map_normal textures/cm104_life_buoy_n.png
+map_ao textures/default_ao.jpg
+
+newmtl c1046b2b-d742-4461-b415-bf0e0df9e520
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/asb078_wisconsin_1945_a.jpg
+map_Ks textures/asb078_wisconsin_1945_mg.jpg
+map_normal textures/asb078_wisconsin_1945_n.png
+map_ao textures/asb078_wisconsin_1945_ao.jpg
+
+newmtl 015dee28-d4f6-479e-a46c-5ff0caab55a4
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/asb078_wisconsin_1945_deckhouse_a.jpg
+map_Ks textures/asb078_wisconsin_1945_deckhouse_mg.jpg
+map_normal textures/asb078_wisconsin_1945_deckhouse_n.png
+map_ao textures/asb078_wisconsin_1945_deckhouse_ao.jpg
+
+newmtl 1c80db29-5ab8-4f6c-a71c-d85252e459c5
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/asb078_wisconsin_1945_a.jpg
+map_Ks textures/default_wires_mg.jpg
+
+newmtl 51c492bd-b12b-4bc0-b91d-22598e3fabbe
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/am712_pelorus_a.jpg
+map_Ks textures/am712_pelorus_mg.jpg
+map_normal textures/am712_pelorus_n.png
+map_ao textures/default_ao.jpg
+
+newmtl 30693868-68fd-4814-b8fd-1943c758d084
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/am133_boat_7_a.jpg
+map_Ks textures/am133_boat_7_mg.jpg
+map_normal textures/am133_boat_7_n.png
+map_ao textures/default_ao.jpg
+
+newmtl 5a008aeb-88dc-4598-a19f-7d5e9e4df5c0
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/ad042_director_mk37_mod2_a.jpg
+map_Ks textures/ad042_director_mk37_mod2_mg.jpg
+map_normal textures/ad042_director_mk37_mod2_n.png
+map_ao textures/default_ao.jpg
+
+newmtl 914bb2d5-893d-4a22-9057-0c94968ca5b3
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/ad112_director_mk38_a.jpg
+map_Ks textures/ad112_director_mk38_mg.jpg
+map_normal textures/ad112_director_mk38_n.png
+map_ao textures/default_ao.jpg
+
+newmtl 5847d01c-e8b2-4088-96c3-a4219177fae5
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/ad112_director_mk38_a.jpg
+map_Ks textures/ad112_director_mk38_mg.jpg
+
+newmtl 01347db4-1ce8-4f2e-94ec-e17a4c9de046
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/ags010_5in38_mk32_mod12_a.jpg
+map_Ks textures/ags010_5in38_mk32_mod12_mg.jpg
+map_normal textures/ags010_5in38_mk32_mod12_n.png
+map_ao textures/ags010_5in38_mk32_mod12_ao.jpg
+
+newmtl 5786d43b-01fc-4846-85c2-e94fecaeda09
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/ars102_radar_sc2_a.jpg
+map_Ks textures/ars102_radar_sc2_mg.jpg
+map_normal textures/ars102_radar_sc2_n.png
+map_ao textures/default_ao.jpg
+
+newmtl 10b6780d-6d16-4457-9bec-3b508c8c3b1f
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/c004_grid_1_alpha_a.jpg
+map_d textures/c004_grid_1_alpha_a_alpha.png
+
+newmtl 56a56d9b-a275-4577-a7e4-670214734eb8
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/ars114_radar_sg_a.jpg
+map_Ks textures/ars114_radar_sg_mg.jpg
+map_normal textures/ars114_radar_sg_n.png
+map_ao textures/default_ao.jpg
+
+newmtl 8fdafb92-6491-476c-8cf6-fa73d2d1f839
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/am045_running_lights_f_a.jpg
+map_Ks textures/am045_running_lights_f_mg.jpg
+map_normal textures/am045_running_lights_f_n.png
+map_ao textures/default_ao.jpg
+
+newmtl 62ef7cd1-3a3e-49ea-b0f8-8987e9ba2770
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/am061_sky_lookout_1_a.jpg
+map_Ks textures/am061_sky_lookout_1_mg.jpg
+map_normal textures/am061_sky_lookout_1_n.png
+map_ao textures/default_ao.jpg
+
+newmtl 1b15d16b-f121-4d8d-8a04-76ae4a186538
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/am073_floater_net_basket_a.jpg
+map_Ks textures/am073_floater_net_basket_mg.jpg
+map_normal textures/am073_floater_net_basket_n.png
+map_ao textures/default_ao.jpg
+
+newmtl ddadbf2f-4c9b-43a2-8b38-d83f072b2a78
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/am075_floater_net_basket_grid_a.jpg
+map_Ks textures/am075_floater_net_basket_grid_mg.jpg
+map_normal textures/am075_floater_net_basket_grid_n.png
+map_ao textures/default_ao.jpg
+
+newmtl 113c3816-066b-44f9-98a1-2cc94c99374b
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/am070_loading_machine_a.jpg
+map_Ks textures/am070_loading_machine_mg.jpg
+map_normal textures/am070_loading_machine_n.png
+map_ao textures/default_ao.jpg
+
+newmtl 8acba9d6-5287-490b-be74-116f99ff4fb9
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/am080_whips_antenna_a.jpg
+map_Ks textures/am080_whips_antenna_mg.jpg
+map_normal textures/default_n.png
+map_ao textures/default_ao.jpg
+
+newmtl 330e6c6f-92a9-4bc8-bd8e-a53d57186a3f
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/am080_whips_antenna_a.jpg
+map_Ks textures/am080_whips_antenna_mg.jpg
+
+newmtl c134336d-ae19-4a13-ab47-e007c8ba180f
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/am114_freon_cylinder_acetylene_a.jpg
+map_Ks textures/am114_freon_cylinder_acetylene_mg.jpg
+map_normal textures/am114_freon_cylinder_acetylene_n.png
+map_ao textures/default_ao.jpg
+
+newmtl 4d3c5612-df7a-4844-b1b2-f013c72d2741
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/am176_target_desingnator_a.jpg
+map_Ks textures/am176_target_desingnator_mg.jpg
+map_normal textures/am176_target_desingnator_n.png
+map_ao textures/default_ao.jpg
+
+newmtl f10f037a-a644-43b1-a3ad-9033076c5414
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/am187_switch_panel_4_a.jpg
+map_Ks textures/am187_switch_panel_4_mg.jpg
+map_normal textures/am187_switch_panel_4_n.png
+map_ao textures/default_ao.jpg
+
+newmtl c4af50fd-919e-4578-adb7-2c9979d73968
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/am173_insulator_a.jpg
+map_Ks textures/am173_insulator_mg.jpg
+map_normal textures/am173_insulator_n.png
+map_ao textures/default_ao.jpg
+
+newmtl b3937c59-a15c-45e7-8357-3ea54653c74c
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/am2040_whaleboat_26ft_a.jpg
+map_Ks textures/am2040_whaleboat_26ft_mg.jpg
+map_normal textures/am2040_whaleboat_26ft_n.png
+map_ao textures/default_ao.jpg
+
+newmtl 9d82c186-7ed5-4e5a-ab9b-5381f3fbb6e4
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/cm052_fender_a.jpg
+map_Ks textures/cm052_fender_mg.jpg
+map_normal textures/cm052_fender_n.png
+map_ao textures/default_ao.jpg
+
+newmtl a8a25263-68d5-4fa6-b6a3-bfa13c9719c4
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/am514_boat_winch_a.jpg
+map_Ks textures/am514_boat_winch_mg.jpg
+map_normal textures/am514_boat_winch_n.png
+map_ao textures/default_ao.jpg
+
+newmtl 12b0b8ee-4e7b-4a12-8a27-b51cf95f71b3
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/am686_floater_net_basket_wide_a.jpg
+map_Ks textures/am686_floater_net_basket_wide_mg.jpg
+map_normal textures/am686_floater_net_basket_wide_n.png
+map_ao textures/default_ao.jpg
+
+newmtl fbffbb2b-fb9a-4f0d-bae8-60de91c1474f
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/c008_grid_5_alpha_a.jpg
+map_d textures/c008_grid_5_alpha_a_alpha.png
+
+newmtl 17d5b9b1-8745-481c-b29a-08d9cbfc1668
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/am433_mc_box_a.jpg
+map_Ks textures/am433_mc_box_mg.jpg
+map_normal textures/am433_mc_box_n.png
+map_ao textures/default_ao.jpg
+
+newmtl 127da69e-a8c8-48e0-9132-25b886376114
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/am544_insulator_a.jpg
+map_Ks textures/am544_insulator_mg.jpg
+map_normal textures/am544_insulator_n.png
+map_ao textures/default_ao.jpg
+
+newmtl 7d10806a-f30b-4d84-a21e-5edbd3637b55
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/am682_36in_searchligh_a.jpg
+map_Ks textures/am682_36in_searchligh_mg.jpg
+map_normal textures/am682_36in_searchligh_n.png
+map_ao textures/default_ao.jpg
+
+newmtl e2dff4d7-d672-4dc4-8664-bcfca91a62c9
+Kd 1.000 1.000 1.000
+Ks 1.000 1.000 1.000
+Ns 255
+Ke 0.000 0.000 0.000
+d 1
+map_Kd textures/transparent_glass_alpha_a.png
+
+newmtl b1d166c5-37df-4437-b0a2-b94604ddf28a
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/cm028_swab_rack_a.jpg
+map_Ks textures/cm028_swab_rack_mg.jpg
+map_normal textures/cm028_swab_rack_n.png
+map_ao textures/default_ao.jpg
+
+newmtl 142a0f9b-a529-47bc-8bf3-0f29d9b1fb9a
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/cm056_ships_bell_a.jpg
+map_Ks textures/cm056_ships_bell_mg.jpg
+map_normal textures/cm056_ships_bell_n.png
+map_ao textures/default_ao.jpg
+
+newmtl 9fb50907-9958-4334-a3b2-9e00b14ea779
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/cm126_cleat_a.jpg
+map_Ks textures/cm126_cleat_mg.jpg
+map_normal textures/cm126_cleat_n.png
+map_ao textures/default_ao.jpg
+
+newmtl 189b05c5-d5bf-445a-b9fc-eee0b5fa309c
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/asb078_wisconsin_1945_a.jpg
+map_Ks textures/asb078_wisconsin_1945_mg.jpg
+map_normal textures/asb078_wisconsin_1945_n.png
+map_ao textures/asb078_wisconsin_1945_ao.jpg
+
+newmtl 150bac3f-a5e5-4bc4-aa77-e6efbf153b78
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/asb078_wisconsin_1945_deckhouse_a.jpg
+map_Ks textures/asb078_wisconsin_1945_deckhouse_mg.jpg
+map_normal textures/asb078_wisconsin_1945_deckhouse_n.png
+map_ao textures/asb078_wisconsin_1945_deckhouse_ao.jpg
+
+newmtl 3dc50a01-d1bb-40aa-bb4f-8d4b0f4f3f4c
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/asb078_wisconsin_1945_a.jpg
+map_Ks textures/default_wires_mg.jpg
+
+newmtl a0823bb6-9105-4cc2-a208-1039d802903b
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/am006_reels_1_a.jpg
+map_Ks textures/am006_reels_1_mg.jpg
+map_normal textures/am006_reels_1_n.png
+map_ao textures/default_ao.jpg
+
+newmtl 8f431800-cfbd-4fae-b816-5085efd394eb
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/ac004_catapult_4_a.jpg
+map_Ks textures/ac004_catapult_4_mg.jpg
+map_normal textures/ac004_catapult_4_n.png
+map_ao textures/default_ao.jpg
+
+newmtl 85952db9-12f7-4ce8-8d2d-c6ebd572677c
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/am045_running_lights_f_a.jpg
+map_Ks textures/am045_running_lights_f_mg.jpg
+map_normal textures/am045_running_lights_f_n.png
+map_ao textures/default_ao.jpg
+
+newmtl 08d413c0-d509-461f-8430-995aeb60d926
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/am076_aircraft_cran_1_a.jpg
+map_Ks textures/am076_aircraft_cran_1_mg.jpg
+map_normal textures/am076_aircraft_cran_1_n.png
+map_ao textures/default_ao.jpg
+
+newmtl 5c09696d-ded0-4faa-a8a0-f9edfcfa1db6
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/am076_aircraft_cran_1_a.jpg
+map_Ks textures/default_wires_mg.jpg
+
+newmtl 4a488d76-cca4-4dfb-b490-744978962eba
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/am2021_28ft_personnel_boat_a.jpg
+map_Ks textures/am2021_28ft_personnel_boat_mg.jpg
+map_normal textures/am2021_28ft_personnel_boat_n.png
+map_ao textures/default_ao.jpg
+
+newmtl 3d5695cb-1863-4db0-b8fa-5a883ba5336c
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/am246_hatch_a.jpg
+map_Ks textures/am068_hatch_3_mg.jpg
+map_normal textures/am068_hatch_3_n.png
+map_ao textures/default_ao.jpg
+
+newmtl 065bcfbd-b078-4c55-a2e3-821ab407efac
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/am490_trash_can_a.jpg
+map_Ks textures/am490_trash_can_mg.jpg
+map_normal textures/am490_trash_can_n.png
+map_ao textures/default_ao.jpg
+
+newmtl cbc4da1c-186b-4625-b0b0-574e8537cbbf
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/am098_sirena_a.jpg
+map_Ks textures/am098_sirena_mg.jpg
+map_normal textures/am098_sirena_n.png
+map_ao textures/default_ao.jpg
+
+newmtl f8a39b8b-d56f-4018-8e07-2a91be8dcab0
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/asb078_wisconsin_1945_deckhouse_a.jpg
+map_Ks textures/asb078_wisconsin_1945_deckhouse_mg.jpg
+map_normal textures/asb078_wisconsin_1945_deckhouse_n.png
+map_ao textures/asb078_wisconsin_1945_deckhouse_ao.jpg
+
+newmtl e07eb6ba-ee8d-4cd6-a153-c6cb8a1721fe
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/cm166_propeller4_r_a.jpg
+map_Ks textures/cm166_propeller4_r_mg.jpg
+map_normal textures/cm166_propeller4_r_n.png
+map_ao textures/default_ao.jpg
+
+newmtl 352553a5-bcbf-4285-ae08-f33ead6e24d4
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/cm166_propeller4_r_a.jpg
+map_Ks textures/cm166_propeller4_r_mg.jpg
+map_normal textures/cm166_propeller4_r_n.png
+map_ao textures/default_ao.jpg
+
+newmtl c29ceb0e-cc48-4425-b7d0-7cf5fe756127
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/cm172_propeller_5_r_a.jpg
+map_Ks textures/cm172_propeller_5_r_mg.jpg
+map_normal textures/cm172_propeller_5_r_n.png
+map_ao textures/default_ao.jpg
+
+newmtl fbb044d5-2059-42b0-b791-915dddf2551c
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/cm172_propeller_5_r_a.jpg
+map_Ks textures/cm172_propeller_5_r_mg.jpg
+map_normal textures/cm172_propeller_5_r_n.png
+map_ao textures/default_ao.jpg
+
+newmtl 390eb3a1-8a1e-4b24-989d-03ad6e7f5acc
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/asb078_wisconsin_1945_a.jpg
+map_Ks textures/asb078_wisconsin_1945_mg.jpg
+map_normal textures/asb078_wisconsin_1945_n.png
+map_ao textures/asb078_wisconsin_1945_ao.jpg
+
+newmtl f53cd63d-959a-40a2-8881-9ce0c76e15f0
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/asb078_wisconsin_1945_a.jpg
+map_Ks textures/default_wires_mg.jpg
+
+newmtl bec1c306-bc18-4630-b37e-02eef6b5fe88
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/am018_compass_binnacle_a.jpg
+map_Ks textures/am018_compass_binnacle_mg.jpg
+map_normal textures/am018_compass_binnacle_n.png
+map_ao textures/default_ao.jpg
+
+newmtl 47d55dbd-9c14-459b-a35d-8d83e14c8598
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/af029_periscope_1_a.jpg
+map_Ks textures/af029_periscope_1_mg.jpg
+map_normal textures/af029_periscope_1_n.png
+map_ao textures/default_ao.jpg
+
+newmtl 1ab1436b-5f75-4fef-9600-2894240b6971
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/arf021_radar_mk27_a.jpg
+map_Ks textures/arf021_radar_mk27_mg.jpg
+map_normal textures/arf021_radar_mk27_n.png
+map_ao textures/default_ao.jpg
+
+newmtl 7528ccbe-811c-4e37-9645-ddbdb1fdecc7
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/ars006_radar_sk_a.jpg
+map_Ks textures/ars006_radar_sk_mg.jpg
+map_normal textures/ars006_radar_sk_n.png
+map_ao textures/default_ao.jpg
+
+newmtl f8265a14-5951-419b-9240-fb020921e2b2
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/am072_ships_bell_a.jpg
+map_Ks textures/am072_ships_bell_mg.jpg
+map_normal textures/am072_ships_bell_n.png
+map_ao textures/default_ao.jpg
+
+newmtl d1ebcfd2-87a5-43fc-a5af-bb103a973371
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/am079_24in_searchlight_a.jpg
+map_Ks textures/am079_24in_searchlight_mg.jpg
+map_normal textures/am079_24in_searchlight_n.png
+map_ao textures/default_ao.jpg
+
+newmtl bebf87a8-6bc0-4143-8b15-683bc37d79ec
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/am150_telegraph_engine_a.jpg
+map_Ks textures/am150_telegraph_engine_mg.jpg
+map_normal textures/am150_telegraph_engine_n.png
+map_ao textures/default_ao.jpg
+
+newmtl e8b6c2f1-4e5f-48bf-9e61-b859cbfcde42
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/c017_grid_10_alpha_a.jpg
+map_d textures/c017_grid_10_alpha_a_alpha.png
+
+newmtl e84a2386-7a93-4806-a61d-53fc2ec26a37
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/am532_sky_lookout_2_a.jpg
+map_Ks textures/am532_sky_lookout_2_mg.jpg
+map_normal textures/am532_sky_lookout_2_n.png
+map_ao textures/default_ao.jpg
+
+newmtl 4c50d5bc-98bb-4731-9608-37aba4aa3468
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/am729_searchlight_12inch_a.jpg
+map_Ks textures/am729_searchlight_12inch_mg.jpg
+map_normal textures/am729_searchlight_12inch_n.png
+map_ao textures/default_ao.jpg
+
+newmtl 790b7c0e-4081-4f24-a03d-9e644c37d5df
+Kd 1.000 1.000 1.000
+Ks 0.125 0.125 0.125
+Ns 32
+Ke 0.000 0.000 0.000
+map_Kd textures/cm082_rope_a.jpg
+map_Ks textures/cm082_rope_mg.jpg
+map_normal textures/cm082_rope_n.png
+map_ao textures/default_ao.jpg
+

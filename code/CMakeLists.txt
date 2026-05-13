@@ -76,6 +76,7 @@ endif()
 
 target_include_directories(${PROJECT_NAME} PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    "${CMAKE_CURRENT_SOURCE_DIR}/external"
     "${CMAKE_CURRENT_SOURCE_DIR}/external/glad/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/external/stb"
     "${IMGUI_DIR}"

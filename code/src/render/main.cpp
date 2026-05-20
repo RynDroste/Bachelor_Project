@@ -11,6 +11,7 @@
 #include "solver_pipeline/pipeline.h"
 #include "render/boat.h"
 #include "render/obj_mesh.h"
+#include "render/mesh_bvh.h"
 #include "render/scene_camera.h"
 #include "render/terrain_material.h"
 #include "render/shader_file.h"
@@ -55,7 +56,6 @@ constexpr float kGradPenaltyD = 0.05f;
 constexpr bool  kVsync          = false;
 constexpr int   kWindowWidth    = 1280;
 constexpr int   kWindowHeight   = 720;
-// Default framebuffer MSAA (0 = off). 4 or 8 is typical; reduces geometry/edge aliasing.
 constexpr int   kMsaaSamples    = 8;
 constexpr int   kWaveDiffuseIters = 8; 
 constexpr float kCamFovDeg      = 55.f;
@@ -619,6 +619,10 @@ int main() {
         if (!boatMesh.load(boatObjPath))
             std::fprintf(stderr, "warning: boat OBJ failed to load (%s)\n", boatObjPath.c_str());
     }
+
+    MeshBVH boatBVH;
+    if (!boatMesh.verts.empty())
+        boatBVH.build(boatMesh);
 
     // Load one GL texture per unique diffuse path; share across groups with the same texture.
     std::unordered_map<std::string, GLuint> boatTexCache;
